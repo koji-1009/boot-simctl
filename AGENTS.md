@@ -58,6 +58,10 @@ Both are flat objects one level deep, so `awk` can split them on the object boun
 
 **Exit codes**: 145 invalid runtime, 147 incompatible device, 148 invalid device. Error messages go to **stdout**, so piping to `tail` and reading `$?` gives you the exit status of `tail`, not of simctl.
 
+**A booted device is not necessarily ready to launch apps.** On a GitHub runner, `simctl openurl` timed out (exit 60) on an iPad that `bootstatus -b` had reported as finished. There is no known signal for app-launch readiness; if a caller needs one, it belongs to the app, not here.
+
+A CPU-quiet heuristic used to sit after boot, ported from `simulator-action`: wait until the total CPU of `launchd_sim`'s children stays under a threshold. It was removed. On GitHub runners three of four jobs never met the threshold, the one that did went on to fail at launching an app anyway, and each job spent 161-237s there. Do not reintroduce it without evidence that waiting changes an outcome.
+
 **`xcrun` execs `simctl` rather than forking it.** `$!` after `xcrun simctl ... &` is simctl's own pid, so `kill -TERM` reaches it and leaves no orphan. Verified: no simctl process survives a timeout kill.
 
 ## Environment gotchas

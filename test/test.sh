@@ -147,7 +147,6 @@ expect_fail "--device rejects other families"       boot --device appleWatch --d
 expect_fail "--model rejects unknown models"        boot --model "iPhone 99" --dry-run
 expect_fail "--name rejects an empty value"         boot --name "" --dry-run
 expect_fail "non-numeric --boot-timeout fails"      boot --boot-timeout soon --dry-run
-expect_fail "zero --settle-interval fails"          boot --settle-interval 0 --dry-run
 expect_fail "invalid version requirement fails"     boot --os ">=abc" --dry-run
 # Would pass if the spec were glob-expanded against the working directory.
 expect_fail "a globbing --os fails"                 boot --os "*" --dry-run
@@ -205,11 +204,11 @@ if [ "$RUN_SLOW" = 1 ]; then
     fail "booting an iPhone failed"
   fi
 
-  if udid=$("$SCRIPT" boot --device iPad --name "$NAME" --settle-timeout 60 2>/dev/null); then
-    ok "iPad booted and settled ($udid)"
+  if udid=$("$SCRIPT" boot --device iPad --name "$NAME" 2>/dev/null); then
+    ok "iPad booted ($udid)"
     "$SCRIPT" shutdown "$udid" >/dev/null 2>&1
   else
-    fail "booting an iPad with --settle-timeout failed"
+    fail "booting an iPad failed"
   fi
 
   # The newest iPhone models cannot run the oldest runtime and must be excluded.

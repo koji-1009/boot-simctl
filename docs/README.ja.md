@@ -38,10 +38,6 @@ action は薄いラッパーなので、各入力はスクリプトのオプシ�
 | `wait` | `--no-wait` | `true` | 起動完了を待つ。待たない場合、以下の行は適用されない |
 | `boot-timeout` | `--boot-timeout` | `360` | 1 回の起動試行の制限秒数。`0` で無制限 |
 | `boot-retries` | `--boot-retries` | `2` | 起動に失敗したときの再試行回数 |
-| `settle-timeout` | `--settle-timeout` | `0` | 起動後にデーモンが落ち着くまで待つ上限秒数。`0` で待たない |
-| `settle-cpu` | `--settle-cpu` | `20` | 「落ち着いた」とみなす CPU 使用率の閾値 |
-| `settle-samples` | `--settle-samples` | `3` | 閾値を下回る必要がある連続サンプル数 |
-| `settle-interval` | `--settle-interval` | `2` | サンプリング間隔 |
 
 出力は `udid` のみです。スクリプトにはこのほかに `--dry-run` があり、絞り込んだリストを表示して終了します。
 

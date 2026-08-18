@@ -54,7 +54,6 @@ jobs:
         with:
           device: ${{ matrix.device }}
           os: ${{ steps.os.outputs.spec }}
-          settle-timeout: '120'
 
       - name: Use the simulator
         run: |
