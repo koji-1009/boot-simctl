@@ -1,0 +1,567 @@
+#!/bin/sh
+#
+# Boot an iPhone or iPad simulator. Run with --help for usage.
+#
+# Dependencies: xcrun (Xcode), plutil (macOS), POSIX sed/awk/sort/ps. macOS only.
+
+set -eu
+
+PROG=${0##*/}
+DEFAULT_NAME=ci-simulator
+TAB=$(printf '\t')
+
+# Test hooks: read the candidate or Xcode list from a file instead of the system.
+CANDIDATES_FILE=${BOOT_SIMCTL_CANDIDATES_FILE:-}
+XCODES_FILE=${BOOT_SIMCTL_XCODES_FILE:-}
+
+TMPFILE=
+trap '[ -z "$TMPFILE" ] || rm -f "$TMPFILE"' EXIT
+
+log() { echo "$PROG: $*" >&2; }
+die() { log "$*"; exit 1; }
+
+# Called as `need_value "$@"` from an option branch: fails when $1 has no value.
+need_value() { [ $# -ge 2 ] || die "$1 needs a value"; }
+
+usage() {
+  cat <<'EOF'
+Usage:
+  boot-simctl boot [options]
+  boot-simctl shutdown [--keep] <udid-or-name>
+  boot-simctl list [runtimes|devicetypes|devices|candidates|xcodes]
+
+shutdown options:
+  --keep                   Stop the device but do not delete it
+
+boot options:
+  --device iPhone|iPad     Device family to launch (default: iPhone).
+                           Ignored when --model is given.
+  --os <spec>              iOS version requirement (default: any)
+  --xcode <spec>           Select this Xcode first, same syntax as --os. Sets
+                           DEVELOPER_DIR, which decides the runtimes on offer.
+  --model <name>           Exact device model, e.g. "iPhone 17 Pro"
+  --name <name>            Name of the simulator to create (default: ci-simulator)
+  --reuse                  Reuse an existing simulator of that name and iOS
+                           version instead of recreating it
+  --no-wait                Return as soon as boot is requested. The boot and
+                           settle options below do not apply in that case.
+  --boot-timeout <sec>     Give up on a single boot attempt after this long,
+                           0 to disable (default: 360)
+  --boot-retries <n>       Retry a failed boot this many times (default: 2)
+  --settle-timeout <sec>   After boot, wait for background daemons to quiet down,
+                           up to this long. 0 disables the wait (default: 0)
+  --settle-cpu <percent>   CPU threshold below which the device counts as settled
+                           (default: 20)
+  --settle-samples <n>     Consecutive samples below the threshold required
+                           (default: 3)
+  --settle-interval <sec>  Seconds between settle samples (default: 2)
+  --dry-run                Print the matching candidates, the chosen one first,
+                           and exit without creating or booting anything
+
+How a device is chosen:
+
+  Every (iOS version, device model) pair that this Mac can actually run is
+  collected into one list, ordered newest iOS first and, within one iOS version,
+  in the order Xcode itself lists models -- newest first. Each option you pass
+  narrows that list, and the first surviving entry wins:
+
+    (nothing)                     newest iPhone on the newest iOS
+    --device iPad                 newest iPad on the newest iOS
+    --os 26.1                     newest iPhone on the newest 26.1.x
+    --os 26.1 --model "iPhone 17" exactly that pairing
+
+--os takes a version prefix, which matches on dot boundaries, or a comparison.
+Space-separated requirements are ANDed together.
+
+  26          any 26.x.y            >=26.1          26.1.0 or newer
+  26.1        any 26.1.x            <26.5           older than 26.5
+  26.1.1      exactly 26.1.1        ">=26.0 <26.5"  both must hold
+
+On success the UDID of the booted device is printed on stdout, and written to
+$GITHUB_OUTPUT as `udid=<udid>` when running under GitHub Actions.
+EOF
+}
+
+# --- shared awk preambles ----------------------------------------------------
+
+# Splits a line of flat JSON objects into out[1..n] and reads a field by name,
+# returning "" when it is absent.
+AWK_JSON='
+  function objects(line, out) { return split(line, out, /\}[^{]*\{/) }
+  function field(row, key,   pat) {
+    pat = "\"" key "\":\"[^\"]*\""
+    if (!match(row, pat)) return ""
+    return substr(row, RSTART + length(key) + 4, RLENGTH - length(key) - 5)
+  }
+'
+
+
+# Fixed-width sortable version key. Ordering and --os comparison must agree, so
+# both use this one definition.
+AWK_VKEY='
+  function vkey(v,   n, a) {
+    n = split(v, a, ".")
+    return sprintf("%05d%05d%05d", a[1] + 0, (n > 1 ? a[2] + 0 : 0), (n > 2 ? a[3] + 0 : 0))
+  }
+'
+
+# --- the candidate list ------------------------------------------------------
+#
+# One tab-separated row per pairing CoreSimulator will accept:
+#
+#   <ios version>  <runtime id>  <family>  <model name>  <device type id>
+
+build_candidates() {
+  if [ -n "$CANDIDATES_FILE" ]; then
+    cat "$CANDIDATES_FILE"
+    return
+  fi
+
+  TMPFILE=$(mktemp "${TMPDIR:-/tmp}/boot-simctl.XXXXXX") ||
+    die "could not create a temporary file"
+  xcrun simctl list runtimes --json >"$TMPFILE" 2>/dev/null ||
+    die "could not read the runtime list; check that Xcode is selected (xcode-select -p)"
+
+  count=$(plutil -extract runtimes raw -o - -- "$TMPFILE" 2>/dev/null) || count=0
+  case $count in
+    ''|*[!0-9]*) count=0 ;;
+  esac
+
+  i=0
+  while [ "$i" -lt "$count" ]; do
+    platform=$(plutil -extract "runtimes.$i.platform" raw -o - -- "$TMPFILE" 2>/dev/null) || platform=
+    available=$(plutil -extract "runtimes.$i.isAvailable" raw -o - -- "$TMPFILE" 2>/dev/null) || available=false
+    if [ "$platform" = iOS ] && [ "$available" = true ]; then
+      version=$(plutil -extract "runtimes.$i.version" raw -o - -- "$TMPFILE" 2>/dev/null) || version=
+      identifier=$(plutil -extract "runtimes.$i.identifier" raw -o - -- "$TMPFILE" 2>/dev/null) || identifier=
+      if [ -n "$version" ] && [ -n "$identifier" ]; then
+        plutil -extract "runtimes.$i.supportedDeviceTypes" json -o - -- "$TMPFILE" 2>/dev/null |
+        awk -v v="$version" -v r="$identifier" "$AWK_JSON"'
+          {
+            n = objects($0, rows)
+            for (k = 1; k <= n; k++) {
+              name = field(rows[k], "name")
+              id   = field(rows[k], "identifier")
+              fam  = field(rows[k], "productFamily")
+              if (name != "" && id != "" && fam != "")
+                print v "\t" r "\t" fam "\t" name "\t" id
+            }
+          }
+        '
+      fi
+    fi
+    i=$((i + 1))
+  done
+}
+
+# Orders tab-separated rows by their first column, newest version first, keeping
+# the input order within one version.
+sort_by_version() {
+  awk -F'\t' "$AWK_VKEY"'
+    NF >= 2 && $1 != "" { printf "%s\t%06d\t%s\n", vkey($1), NR, $0 }
+  ' |
+  sort -t"$TAB" -k1,1r -k2,2n |
+  cut -f3-
+}
+
+candidate_pool() { build_candidates | sort_by_version; }
+
+# Prints "<version><TAB><developer dir>" for each installed Xcode. The version
+# comes from the bundle rather than the path, so the naming a runner image
+# happens to use for /Applications/Xcode*.app does not matter.
+list_xcodes() {
+  if [ -n "$XCODES_FILE" ]; then
+    cat "$XCODES_FILE"
+    return
+  fi
+  for app in /Applications/Xcode*.app; do
+    [ -d "$app" ] || continue
+    version=$(plutil -extract CFBundleShortVersionString raw -o - -- \
+      "$app/Contents/version.plist" 2>/dev/null) || continue
+    [ -n "$version" ] && [ -d "$app/Contents/Developer" ] &&
+      printf '%s\t%s\n' "$version" "$app/Contents/Developer"
+  done
+}
+
+# Points DEVELOPER_DIR at the newest Xcode satisfying $1, for this process and,
+# under GitHub Actions, for the rest of the job.
+select_xcode() {
+  xcodes=$(list_xcodes | sort_by_version)
+  [ -n "$xcodes" ] || die "no Xcode found in /Applications"
+
+  chosen=$(printf '%s\n' "$xcodes" | filter_by_version "$1" | head -1)
+  if [ -z "$chosen" ]; then
+    log "installed Xcode versions:"
+    printf '%s\n' "$xcodes" | cut -f1 | sed 's/^/  /' >&2
+    die "no Xcode satisfies '$1'"
+  fi
+
+  DEVELOPER_DIR=${chosen#*"$TAB"}
+  export DEVELOPER_DIR
+  log "Xcode ${chosen%%"$TAB"*} ($DEVELOPER_DIR)"
+  [ -z "${GITHUB_ENV:-}" ] || echo "DEVELOPER_DIR=$DEVELOPER_DIR" >> "$GITHUB_ENV"
+}
+
+# Keeps the candidate rows whose column $1 equals $2.
+filter_by_field() {
+  awk -F'\t' -v col="$1" -v want="$2" '$col == want'
+}
+
+# Narrows $pool by running "$4 $5..." over it. On an empty result, lists the
+# distinct column-$2 values still available under heading $3, then dies with $1.
+narrow() {
+  _message=$1
+  _hint_column=$2
+  _hint_label=$3
+  shift 3
+  _narrowed=$(printf '%s\n' "$pool" | "$@")
+  if [ -z "$_narrowed" ]; then
+    log "$_hint_label:"
+    # awk, not sort -u: the pool is already in preference order, keep it.
+    printf '%s\n' "$pool" | cut -f"$_hint_column" | awk '!seen[$0]++' | sed 's/^/  /' >&2
+    die "$_message"
+  fi
+  pool=$_narrowed
+}
+
+# Rejects a malformed --os requirement, e.g. ">=abc" or "26..1".
+validate_version_spec() {
+  # Split on spaces, but never glob: the value checked must be the value used.
+  set -f
+  for tok in $1; do
+    case $tok in
+      '>='*|'<='*) num=${tok#??} ;;
+      '>'*|'<'*)   num=${tok#?} ;;
+      *)           num=$tok ;;
+    esac
+    case $num in
+      ''|*[!0-9.]*|.*|*.|*..*) set +f; die "invalid version requirement: $tok" ;;
+    esac
+  done
+  set +f
+}
+
+# Keeps the candidate rows whose iOS version satisfies $1.
+filter_by_version() {
+  awk -F'\t' -v spec="$1" "$AWK_VKEY"'
+    # Prefix on dot boundaries: "26.1" matches 26.1.1 but not 26.10.
+    function isprefix(v, p) { return index(v ".", p ".") == 1 }
+    function satisfies(v, s,   i, n, t, tok, op, arg) {
+      if (s == "") return 1
+      n = split(s, t, / +/)
+      for (i = 1; i <= n; i++) {
+        tok = t[i]
+        if (tok == "") continue
+        if (match(tok, /^(>=|<=|[><])/)) { op = substr(tok, 1, RLENGTH); arg = substr(tok, RLENGTH + 1) }
+        else                             { op = ""; arg = tok }
+        if      (op == ">=") { if (!(vkey(v) >= vkey(arg))) return 0 }
+        else if (op == "<=") { if (!(vkey(v) <= vkey(arg))) return 0 }
+        else if (op == ">")  { if (!(vkey(v) >  vkey(arg))) return 0 }
+        else if (op == "<")  { if (!(vkey(v) <  vkey(arg))) return 0 }
+        else                 { if (!isprefix(v, arg)) return 0 }
+      }
+      return 1
+    }
+    satisfies($1, spec)
+  '
+}
+
+# --- simctl helpers ----------------------------------------------------------
+
+# Prints "<udid><TAB><state>" for an available device named $1 under runtime
+# identifier $2, or nothing. The runtime must match, or --reuse would return a
+# leftover device on another iOS version.
+find_existing_device() {
+  xcrun simctl list devices --json 2>/dev/null |
+  plutil -extract "devices.$(printf '%s' "$2" | sed 's/\./\\./g')" json -o - -- - 2>/dev/null |
+  awk -v n="$1" "$AWK_JSON"'
+    {
+      count = objects($0, rows)
+      for (k = 1; k <= count; k++) {
+        if (field(rows[k], "name") != n) continue
+        if (!index(rows[k], "\"isAvailable\":true")) continue
+        udid = field(rows[k], "udid")
+        if (udid != "") { print udid "\t" field(rows[k], "state"); exit }
+      }
+    }
+  '
+}
+
+# --- settle ------------------------------------------------------------------
+
+# Sums the %CPU of every direct child of the launchd_sim process for $1.
+# Prints an empty line when no such process exists (device not booted yet).
+settle_cpu() {
+  ps -Aww -o pid=,ppid=,pcpu=,command= |
+  awk -v u="$1" '
+    BEGIN { u = tolower(u) }
+    {
+      ppid[NR] = $2; pcpu[NR] = $3
+      line = tolower($0)
+      if (target == "" && index(line, "launchd_sim") && index(line, u)) target = $1
+    }
+    END {
+      if (target == "") { print ""; exit }
+      total = 0
+      for (i = 1; i <= NR; i++) if (ppid[i] == target) total += pcpu[i]
+      printf "%.1f\n", total
+    }
+  '
+}
+
+# wait_for_settle <udid> <timeout> <threshold> <samples> <interval>
+# Never fails the caller: on timeout it warns and returns success.
+wait_for_settle() {
+  _udid=$1; _timeout=$2; _threshold=$3; _samples=$4; _interval=$5
+  _waited=0
+  _under=0
+  while :; do
+    _cpu=$(settle_cpu "$_udid")
+    if [ -z "$_cpu" ]; then
+      _under=0
+    else
+      if awk -v c="$_cpu" -v t="$_threshold" 'BEGIN { exit !(c < t) }'; then
+        _under=$((_under + 1))
+      else
+        _under=0
+      fi
+      if [ "$_under" -ge "$_samples" ]; then
+        log "settled (background CPU below ${_threshold}% for ${_samples} checks)"
+        return 0
+      fi
+    fi
+    if [ "$_waited" -ge "$_timeout" ]; then
+      log "warning: gave up after ${_waited}s waiting for the simulator to settle below ${_threshold}% CPU; continuing"
+      return 0
+    fi
+    sleep "$_interval"
+    _waited=$((_waited + _interval))
+  done
+}
+
+# --- boot --------------------------------------------------------------------
+
+# Runs `simctl bootstatus -b` with a timeout, since macOS has no timeout(1).
+# Returns 124 on timeout, otherwise the exit status of bootstatus.
+boot_and_wait() {
+  _udid=$1; _timeout=$2
+  xcrun simctl bootstatus "$_udid" -b >&2 &
+  _pid=$!
+  _waited=0
+  while kill -0 "$_pid" 2>/dev/null; do
+    if [ "$_timeout" -gt 0 ] && [ "$_waited" -ge "$_timeout" ]; then
+      kill -TERM "$_pid" 2>/dev/null || true
+      wait "$_pid" 2>/dev/null || true
+      return 124
+    fi
+    sleep 1
+    _waited=$((_waited + 1))
+  done
+  wait "$_pid" || return $?
+  return 0
+}
+
+# Boots $1 (named $2), retrying up to $4 times with a $3-second limit each.
+# Dies if every attempt fails.
+boot_with_retries() {
+  _udid=$1; _name=$2; _timeout=$3; _retries=$4
+  _attempt=1
+  _max=$((_retries + 1))
+  while :; do
+    if boot_and_wait "$_udid" "$_timeout"; then
+      return 0
+    else
+      _rc=$?
+    fi
+    if [ "$_rc" = 124 ]; then
+      log "warning: boot attempt ${_attempt}/${_max} timed out after ${_timeout}s"
+    else
+      log "warning: boot attempt ${_attempt}/${_max} failed (exit ${_rc})"
+    fi
+    # Kept, not deleted, so `simctl diagnose` can still reach it by name.
+    xcrun simctl shutdown "$_udid" >/dev/null 2>&1 || true
+    [ "$_attempt" -lt "$_max" ] ||
+      die "device $_udid failed to boot; it is left shut down as '$_name'"
+    _attempt=$((_attempt + 1))
+  done
+}
+
+# --- subcommands -------------------------------------------------------------
+
+cmd_boot() {
+  family=iPhone
+  os_spec=
+  xcode_spec=
+  model=
+  sim_name=$DEFAULT_NAME
+  reuse=0
+  wait_for_boot=1
+  boot_timeout=360
+  boot_retries=2
+  settle_timeout=0
+  settle_cpu_pct=20
+  settle_samples=3
+  settle_interval=2
+  dry_run=0
+
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --device)          need_value "$@"; family=$2; shift 2 ;;
+      --os)              need_value "$@"; os_spec=$2; shift 2 ;;
+      --xcode)           need_value "$@"; xcode_spec=$2; shift 2 ;;
+      --model)           need_value "$@"; model=$2; shift 2 ;;
+      --name)            need_value "$@"; sim_name=$2; shift 2 ;;
+      --boot-timeout)    need_value "$@"; boot_timeout=$2; shift 2 ;;
+      --boot-retries)    need_value "$@"; boot_retries=$2; shift 2 ;;
+      --settle-timeout)  need_value "$@"; settle_timeout=$2; shift 2 ;;
+      --settle-cpu)      need_value "$@"; settle_cpu_pct=$2; shift 2 ;;
+      --settle-samples)  need_value "$@"; settle_samples=$2; shift 2 ;;
+      --settle-interval) need_value "$@"; settle_interval=$2; shift 2 ;;
+      --reuse)           reuse=1; shift ;;
+      --no-wait)         wait_for_boot=0; shift ;;
+      --dry-run)         dry_run=1; shift ;;
+      -h|--help)         usage; return 0 ;;
+      *)                 die "unknown option for boot: $1" ;;
+    esac
+  done
+
+  [ -n "$sim_name" ] || die "--name must not be empty"
+  for n in "$boot_timeout" "$boot_retries" "$settle_timeout" "$settle_cpu_pct" "$settle_samples" "$settle_interval"; do
+    case $n in
+      ''|*[!0-9]*) die "numeric option expected, got: $n" ;;
+    esac
+  done
+  [ "$settle_interval" -gt 0 ] || die "--settle-interval must be greater than 0"
+  validate_version_spec "$os_spec"
+  validate_version_spec "$xcode_spec"
+
+  # Before anything reads the runtime list: which runtimes exist depends on it.
+  [ -z "$xcode_spec" ] || select_xcode "$xcode_spec"
+
+  case $(printf '%s' "$family" | tr 'A-Z' 'a-z') in
+    iphone) family=iPhone ;;
+    ipad)   family=iPad ;;
+    *) die "--device must be iPhone or iPad (got: $family)" ;;
+  esac
+
+  pool=$(candidate_pool)
+  [ -n "$pool" ] ||
+    die "no available iOS runtimes found; check that Xcode is selected (xcode-select -p)"
+
+  if [ -n "$os_spec" ]; then
+    narrow "no iOS version satisfies '$os_spec'" \
+      1 "available iOS versions" filter_by_version "$os_spec"
+  fi
+
+  # --model names a device outright, so it supersedes the family filter.
+  if [ -n "$model" ]; then
+    narrow "no model named '$model'" \
+      4 "models available on the matching iOS versions" filter_by_field 4 "$model"
+  else
+    narrow "no $family model is available on the matching iOS versions" \
+      4 "models available on the matching iOS versions" filter_by_field 3 "$family"
+  fi
+
+  if [ "$dry_run" = 1 ]; then
+    printf '%s\n' "$pool"
+    return 0
+  fi
+
+  IFS=$TAB read -r runtime_version runtime_id _family device_name devicetype_id <<EOF
+$pool
+EOF
+  log "selected $device_name on iOS $runtime_version"
+
+  # A fresh device starts clean, so no `simctl erase` is needed.
+  udid=
+  state=Shutdown
+  if [ "$reuse" = 1 ]; then
+    existing=$(find_existing_device "$sim_name" "$runtime_id")
+    if [ -n "$existing" ]; then
+      udid=${existing%"$TAB"*}
+      state=${existing#*"$TAB"}
+      log "reusing existing device $udid"
+    else
+      log "no existing '$sim_name' on iOS $runtime_version; creating one"
+    fi
+  fi
+
+  if [ -z "$udid" ]; then
+    xcrun simctl delete "$sim_name" >/dev/null 2>&1 || true
+    udid=$(xcrun simctl create "$sim_name" "$devicetype_id" "$runtime_id") ||
+      die "could not create $device_name on iOS $runtime_version"
+  fi
+
+  if [ "$wait_for_boot" = 0 ]; then
+    # Plain `boot` fails on an already-booted device, unlike `bootstatus -b`.
+    if [ "$state" = Booted ]; then
+      log "device is already booted"
+    else
+      xcrun simctl boot "$udid" >&2
+    fi
+  else
+    boot_with_retries "$udid" "$sim_name" "$boot_timeout" "$boot_retries"
+
+    if [ "$settle_timeout" -gt 0 ]; then
+      log "waiting for the simulator to settle"
+      wait_for_settle "$udid" "$settle_timeout" "$settle_cpu_pct" "$settle_samples" "$settle_interval"
+    fi
+  fi
+
+  log "booted $udid"
+  [ -z "${GITHUB_OUTPUT:-}" ] || echo "udid=$udid" >> "$GITHUB_OUTPUT"
+  echo "$udid"
+}
+
+cmd_shutdown() {
+  keep=0
+  target=
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --keep) keep=1; shift ;;
+      -h|--help) usage; return 0 ;;
+      -*) die "unknown option for shutdown: $1" ;;
+      *)
+        [ -z "$target" ] || die "shutdown takes a single device"
+        target=$1
+        shift
+        ;;
+    esac
+  done
+
+  # An unset variable expanding to "" must not silently mean "shut down nothing".
+  [ -n "$target" ] || die "shutdown needs a UDID or simulator name"
+
+  xcrun simctl shutdown "$target" >/dev/null 2>&1 || true
+  if [ "$keep" = 0 ]; then
+    xcrun simctl delete "$target" >/dev/null 2>&1 || true
+  fi
+  log "shut down $target"
+}
+
+cmd_list() {
+  what=${1:-candidates}
+  # Tab-separated throughout, since model names contain spaces.
+  case $what in
+    candidates)  candidate_pool ;;
+    runtimes)    candidate_pool | cut -f1,2 | uniq ;;
+    devicetypes) candidate_pool | cut -f3,4,5 | awk '!seen[$0]++' ;;
+    xcodes)      list_xcodes | sort_by_version ;;
+    devices)     xcrun simctl list devices available 2>/dev/null ;;
+    *) die "list takes one of: runtimes, devicetypes, devices, candidates, xcodes" ;;
+  esac
+}
+
+# --- entry point -------------------------------------------------------------
+
+[ $# -gt 0 ] || { usage >&2; exit 2; }
+
+subcommand=$1
+shift
+case $subcommand in
+  boot)      cmd_boot "$@" ;;
+  shutdown)  cmd_shutdown "$@" ;;
+  list)      cmd_list "$@" ;;
+  -h|--help) usage ;;
+  *)         usage >&2; die "unknown subcommand: $subcommand" ;;
+esac

@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: self-test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Show what this runner offers
+        run: |
+          ./boot-simctl list xcodes
+          ./boot-simctl list runtimes
+          ./boot-simctl list devicetypes | head -20
+
+      - name: Run the test suite
+        run: ./test/test.sh --all
+
+  action:
+    name: boot ${{ matrix.device }} on the ${{ matrix.runtime }} runtime
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [iPhone, iPad]
+        runtime: [newest, oldest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Derived, so a runner image swapping its runtimes does not fail the build.
+      - name: Resolve the iOS version
+        id: os
+        run: |
+          versions=$(./boot-simctl list runtimes | cut -f1)
+          case '${{ matrix.runtime }}' in
+            newest) spec=$(printf '%s\n' "$versions" | head -1) ;;
+            oldest) spec=$(printf '%s\n' "$versions" | tail -1) ;;
+          esac
+          echo "spec=$spec" >> "$GITHUB_OUTPUT"
+
+      # `uses: ./` is the only way to test action.yml's input wiring.
+      - name: Boot the simulator
+        id: sim
+        uses: ./
+        with:
+          device: ${{ matrix.device }}
+          os: ${{ steps.os.outputs.spec }}
+          settle-timeout: '120'
+
+      - name: Use the simulator
+        run: |
+          xcrun simctl openurl '${{ steps.sim.outputs.udid }}' https://example.com
+          xcrun simctl io '${{ steps.sim.outputs.udid }}' screenshot screenshot.png
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: screenshot-${{ matrix.device }}-${{ matrix.runtime }}
+          path: screenshot.png
+
+      # A composite action cannot register a post step, so this is explicit.
+      - name: Shut down the simulator
+        if: always() && steps.sim.outputs.udid != ''
+        uses: ./shutdown
+        with:
+          udid: ${{ steps.sim.outputs.udid }}
+
+  action-defaults:
+    name: boot with no inputs
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - id: sim
+        uses: ./
+
+      - run: test -n '${{ steps.sim.outputs.udid }}'
+
+      - if: always() && steps.sim.outputs.udid != ''
+        uses: ./shutdown
+        with:
+          udid: ${{ steps.sim.outputs.udid }}
+
+  action-xcode:
+    name: boot on a pinned Xcode
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Resolve the oldest installed Xcode
+        id: xc
+        run: echo "spec=$(./boot-simctl list xcodes | tail -1 | cut -f1)" >> "$GITHUB_OUTPUT"
+
+      - id: sim
+        uses: ./
+        with:
+          xcode-version: ${{ steps.xc.outputs.spec }}
+
+      # DEVELOPER_DIR must have reached the job, not just the action's own step.
+      - run: |
+          echo "DEVELOPER_DIR=$DEVELOPER_DIR"
+          test -n "$DEVELOPER_DIR"
+          xcodebuild -version
+
+      - if: always() && steps.sim.outputs.udid != ''
+        uses: ./shutdown
+        with:
+          udid: ${{ steps.sim.outputs.udid }}

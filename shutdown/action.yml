@@ -1,0 +1,30 @@
+name: 'Shut Down Simulator'
+description: 'Shut down a simulator booted by boot-simctl'
+author: 'koji-1009'
+
+inputs:
+  udid:
+    description: 'UDID or name of the device to shut down'
+    required: true
+  keep:
+    description: 'Stop the device but do not delete it'
+    required: false
+    default: 'false'
+
+branding:
+  icon: 'power'
+  color: 'gray-dark'
+
+runs:
+  using: 'composite'
+  steps:
+    - shell: sh
+      env:
+        INPUT_UDID: ${{ inputs.udid }}
+        INPUT_KEEP: ${{ inputs.keep }}
+      run: |
+        set -eu
+        set -- shutdown
+        [ "$INPUT_KEEP" != true ] || set -- "$@" --keep
+        # This action lives one directory below the script it calls.
+        "$GITHUB_ACTION_PATH/../boot-simctl" "$@" "$INPUT_UDID"

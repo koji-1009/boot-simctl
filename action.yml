@@ -1,0 +1,105 @@
+name: 'Boot Simulator'
+description: 'Boot an iPhone or iPad simulator for GitHub Actions'
+author: 'koji-1009'
+
+inputs:
+  device:
+    description: 'Device family: iPhone or iPad (ignored when model is set)'
+    required: false
+    default: 'iPhone'
+  os:
+    description: 'iOS version (e.g. 26, 26.1, 26.1.1, >=26.1, >=26.0 <26.5)'
+    required: false
+    default: ''
+  xcode-version:
+    description: 'Xcode to select first, same syntax as os (sets DEVELOPER_DIR for the job)'
+    required: false
+    default: ''
+  model:
+    description: 'Exact model name (e.g. iPhone 17 Pro), takes precedence over device'
+    required: false
+    default: ''
+  name:
+    description: 'Name of the simulator to create'
+    required: false
+    default: 'ci-simulator'
+  reuse:
+    description: 'Reuse an existing simulator of the same name and iOS version'
+    required: false
+    default: 'false'
+  wait:
+    description: 'Wait for the boot to finish (boot and settle inputs need this)'
+    required: false
+    default: 'true'
+  boot-timeout:
+    description: 'Seconds allowed for one boot attempt (0 disables the limit)'
+    required: false
+    default: '360'
+  boot-retries:
+    description: 'Retries after a failed boot'
+    required: false
+    default: '2'
+  settle-timeout:
+    description: 'Seconds to wait for background daemons to quiet down (0 skips)'
+    required: false
+    default: '0'
+  settle-cpu:
+    description: 'CPU percentage below which the device counts as settled'
+    required: false
+    default: '20'
+  settle-samples:
+    description: 'Consecutive samples required below the threshold'
+    required: false
+    default: '3'
+  settle-interval:
+    description: 'Seconds between settle samples'
+    required: false
+    default: '2'
+
+outputs:
+  udid:
+    description: 'UDID of the booted device'
+    value: ${{ steps.boot.outputs.udid }}
+
+branding:
+  icon: 'smartphone'
+  color: 'gray-dark'
+
+runs:
+  using: 'composite'
+  steps:
+    - id: boot
+      shell: sh
+      # Inputs arrive as environment variables, never as ${{ }} expanded into
+      # the command, so a value cannot break out of it.
+      env:
+        INPUT_DEVICE: ${{ inputs.device }}
+        INPUT_OS: ${{ inputs.os }}
+        INPUT_XCODE: ${{ inputs.xcode-version }}
+        INPUT_MODEL: ${{ inputs.model }}
+        INPUT_NAME: ${{ inputs.name }}
+        INPUT_REUSE: ${{ inputs.reuse }}
+        INPUT_WAIT: ${{ inputs.wait }}
+        INPUT_BOOT_TIMEOUT: ${{ inputs.boot-timeout }}
+        INPUT_BOOT_RETRIES: ${{ inputs.boot-retries }}
+        INPUT_SETTLE_TIMEOUT: ${{ inputs.settle-timeout }}
+        INPUT_SETTLE_CPU: ${{ inputs.settle-cpu }}
+        INPUT_SETTLE_SAMPLES: ${{ inputs.settle-samples }}
+        INPUT_SETTLE_INTERVAL: ${{ inputs.settle-interval }}
+      run: |
+        set -eu
+        set -- boot \
+          --device "$INPUT_DEVICE" \
+          --name "$INPUT_NAME" \
+          --boot-timeout "$INPUT_BOOT_TIMEOUT" \
+          --boot-retries "$INPUT_BOOT_RETRIES" \
+          --settle-timeout "$INPUT_SETTLE_TIMEOUT" \
+          --settle-cpu "$INPUT_SETTLE_CPU" \
+          --settle-samples "$INPUT_SETTLE_SAMPLES" \
+          --settle-interval "$INPUT_SETTLE_INTERVAL"
+        [ -z "$INPUT_XCODE" ]      || set -- "$@" --xcode "$INPUT_XCODE"
+        [ -z "$INPUT_OS" ]         || set -- "$@" --os "$INPUT_OS"
+        [ -z "$INPUT_MODEL" ]      || set -- "$@" --model "$INPUT_MODEL"
+        [ "$INPUT_REUSE" != true ] || set -- "$@" --reuse
+        [ "$INPUT_WAIT" = true ]   || set -- "$@" --no-wait
+        "$GITHUB_ACTION_PATH/boot-simctl" "$@"
