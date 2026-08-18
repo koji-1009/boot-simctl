@@ -7,19 +7,18 @@ GitHub Actions で iPhone / iPad のシミュレーターを起動する composi
 *The English version is at [README.md](../README.md).*
 
 ```yaml
-- id: sim
-  uses: koji-1009/boot-simctl@v1.0.0
+- uses: koji-1009/boot-simctl@v1.1.0
   with:
     device: iPhone
     os: '26.1'
 
-- run: xcodebuild test -destination "id=${{ steps.sim.outputs.udid }}" ...
+- run: flutter test integration_test/app_test.dart -d "$SIMULATOR_UDID"
 
-- if: always() && steps.sim.outputs.udid != ''
-  uses: koji-1009/boot-simctl/shutdown@v1.0.0
-  with:
-    udid: ${{ steps.sim.outputs.udid }}
+- if: always()
+  uses: koji-1009/boot-simctl/shutdown@v1.1.0
 ```
+
+起動したデバイスは `SIMULATOR_UDID` としてジョブの残りに公開されます。ツールがデバイスを要求したらこれを渡してください。シミュレーターの名前は `ci-simulator` なので、`flutter test -d iPhone` では見つかりません。
 
 `actions/checkout` は不要です。action 自身がスクリプトを持っています。
 
@@ -34,9 +33,9 @@ action は薄いラッパーなので、各入力はスクリプトのオプシ�
 | `xcode-version` | `--xcode` | 選択中のもの | 先に選ぶ Xcode。構文は `os` と同じ。ジョブの残りにも効く `DEVELOPER_DIR` を設定する |
 | `model` | `--model` | なし | 機種名を直接指定する。`device` より優先 |
 
-出力は `udid` のみです。スクリプトにはこのほかに `--dry-run` があり、絞り込んだリストを表示して終了します。
+スクリプトにはこのほかに `--dry-run` があり、絞り込んだリストを表示して終了します。
 
-`shutdown` action は `udid` を取り、停止したうえで削除します。**composite action は post ステップを登録できない**ため、後片付けは自分で書くステップになります。
+`shutdown` action はデバイスを停止して削除します。既定でこのジョブが起動したものを対象にするので、通常は入力が要りません。別のものを指定したい場合は `udid` を渡します。**composite action は post ステップを登録できない**ため、後片付けは自分で書くステップになります。
 
 ## スクリプトを直接使う
 
@@ -110,13 +109,10 @@ boot-simctl: no iOS version satisfies '26.1'
 使えるランタイムは選択中の Xcode によって変わるため、`xcode-version` が最初に処理され、ジョブの残りは `DEVELOPER_DIR` 経由でそれを引き継ぎます。`sudo` も `xcode-select` も使いません。
 
 ```yaml
-- id: sim
-  uses: koji-1009/boot-simctl@v1.0.0
+- uses: koji-1009/boot-simctl@v1.1.0
   with:
     xcode-version: '26.5'
     os: '26'
-
-- run: xcodebuild test -destination "id=${{ steps.sim.outputs.udid }}" ...
 ```
 
 バージョンはパス名ではなく各バンドルの `version.plist` から読むので、ランナーが `/Applications/Xcode*.app` にどんな名前を付けていても影響を受けません。導入済みのものは `list xcodes` で確認できます。

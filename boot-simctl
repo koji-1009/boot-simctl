@@ -253,7 +253,7 @@ filter_by_version() {
 # comes from the clock, not from counting sleeps, which ignores the loop body.
 boot_and_wait() {
   _udid=$1
-  xcrun simctl bootstatus "$_udid" -b >&2 &
+  xcrun simctl bootstatus "$_udid" -b >/dev/null 2>&1 &
   _pid=$!
   _started=$(date +%s)
   while kill -0 "$_pid" 2>/dev/null; do
@@ -361,7 +361,7 @@ EOF
   boot_with_retries "$udid"
 
   log "booted $udid"
-  [ -z "${GITHUB_OUTPUT:-}" ] || echo "udid=$udid" >> "$GITHUB_OUTPUT"
+  [ -z "${GITHUB_ENV:-}" ] || echo "SIMULATOR_UDID=$udid" >> "$GITHUB_ENV"
   echo "$udid"
 }
 

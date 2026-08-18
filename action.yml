@@ -20,11 +20,6 @@ inputs:
     required: false
     default: ''
 
-outputs:
-  udid:
-    description: 'UDID of the booted device'
-    value: ${{ steps.boot.outputs.udid }}
-
 branding:
   icon: 'smartphone'
   color: 'gray-dark'
@@ -32,8 +27,7 @@ branding:
 runs:
   using: 'composite'
   steps:
-    - id: boot
-      shell: sh
+    - shell: sh
       # Inputs arrive as environment variables, never as ${{ }} expanded into
       # the command, so a value cannot break out of it.
       env:

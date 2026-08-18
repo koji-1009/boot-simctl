@@ -4,8 +4,9 @@ author: 'koji-1009'
 
 inputs:
   udid:
-    description: 'UDID or name of the device to shut down'
-    required: true
+    description: 'UDID or name of the device to shut down (default: the one this job booted)'
+    required: false
+    default: ''
 
 branding:
   icon: 'power'
@@ -19,5 +20,8 @@ runs:
         INPUT_UDID: ${{ inputs.udid }}
       run: |
         set -eu
+        udid=${INPUT_UDID:-${SIMULATOR_UDID:-}}
+        # Reached through `if: always()` when the boot itself failed.
+        [ -n "$udid" ] || { echo "nothing was booted; nothing to shut down"; exit 0; }
         # This action lives one directory below the script it calls.
-        "$GITHUB_ACTION_PATH/../boot-simctl" shutdown "$INPUT_UDID"
+        "$GITHUB_ACTION_PATH/../boot-simctl" shutdown "$udid"
