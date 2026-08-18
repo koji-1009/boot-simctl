@@ -43,18 +43,11 @@ boot options:
   --name <name>            Name of the simulator to create (default: ci-simulator)
   --reuse                  Reuse an existing simulator of that name and iOS
                            version instead of recreating it
-  --no-wait                Return as soon as boot is requested. The boot and
-                           settle options below do not apply in that case.
+  --no-wait                Return as soon as boot is requested. The boot
+                           options below do not apply in that case.
   --boot-timeout <sec>     Give up on a single boot attempt after this long,
                            0 to disable (default: 360)
   --boot-retries <n>       Retry a failed boot this many times (default: 2)
-  --settle-timeout <sec>   After boot, wait for background daemons to quiet down,
-                           up to this long. 0 disables the wait (default: 0)
-  --settle-cpu <percent>   CPU threshold below which the device counts as settled
-                           (default: 20)
-  --settle-samples <n>     Consecutive samples below the threshold required
-                           (default: 3)
-  --settle-interval <sec>  Seconds between settle samples (default: 2)
   --dry-run                Print the matching candidates, the chosen one first,
                            and exit without creating or booting anything
 
@@ -287,58 +280,6 @@ find_existing_device() {
   '
 }
 
-# --- settle ------------------------------------------------------------------
-
-# Sums the %CPU of every direct child of the launchd_sim process for $1.
-# Prints an empty line when no such process exists (device not booted yet).
-settle_cpu() {
-  ps -Aww -o pid=,ppid=,pcpu=,command= |
-  awk -v u="$1" '
-    BEGIN { u = tolower(u) }
-    {
-      ppid[NR] = $2; pcpu[NR] = $3
-      line = tolower($0)
-      if (target == "" && index(line, "launchd_sim") && index(line, u)) target = $1
-    }
-    END {
-      if (target == "") { print ""; exit }
-      total = 0
-      for (i = 1; i <= NR; i++) if (ppid[i] == target) total += pcpu[i]
-      printf "%.1f\n", total
-    }
-  '
-}
-
-# wait_for_settle <udid> <timeout> <threshold> <samples> <interval>
-# Never fails the caller: on timeout it warns and returns success.
-wait_for_settle() {
-  _udid=$1; _timeout=$2; _threshold=$3; _samples=$4; _interval=$5
-  _waited=0
-  _under=0
-  while :; do
-    _cpu=$(settle_cpu "$_udid")
-    if [ -z "$_cpu" ]; then
-      _under=0
-    else
-      if awk -v c="$_cpu" -v t="$_threshold" 'BEGIN { exit !(c < t) }'; then
-        _under=$((_under + 1))
-      else
-        _under=0
-      fi
-      if [ "$_under" -ge "$_samples" ]; then
-        log "settled (background CPU below ${_threshold}% for ${_samples} checks)"
-        return 0
-      fi
-    fi
-    if [ "$_waited" -ge "$_timeout" ]; then
-      log "warning: gave up after ${_waited}s waiting for the simulator to settle below ${_threshold}% CPU; continuing"
-      return 0
-    fi
-    sleep "$_interval"
-    _waited=$((_waited + _interval))
-  done
-}
-
 # --- boot --------------------------------------------------------------------
 
 # Runs `simctl bootstatus -b` with a timeout, since macOS has no timeout(1).
@@ -398,10 +339,6 @@ cmd_boot() {
   wait_for_boot=1
   boot_timeout=360
   boot_retries=2
-  settle_timeout=0
-  settle_cpu_pct=20
-  settle_samples=3
-  settle_interval=2
   dry_run=0
 
   while [ $# -gt 0 ]; do
@@ -413,10 +350,6 @@ cmd_boot() {
       --name)            need_value "$@"; sim_name=$2; shift 2 ;;
       --boot-timeout)    need_value "$@"; boot_timeout=$2; shift 2 ;;
       --boot-retries)    need_value "$@"; boot_retries=$2; shift 2 ;;
-      --settle-timeout)  need_value "$@"; settle_timeout=$2; shift 2 ;;
-      --settle-cpu)      need_value "$@"; settle_cpu_pct=$2; shift 2 ;;
-      --settle-samples)  need_value "$@"; settle_samples=$2; shift 2 ;;
-      --settle-interval) need_value "$@"; settle_interval=$2; shift 2 ;;
       --reuse)           reuse=1; shift ;;
       --no-wait)         wait_for_boot=0; shift ;;
       --dry-run)         dry_run=1; shift ;;
@@ -426,12 +359,11 @@ cmd_boot() {
   done
 
   [ -n "$sim_name" ] || die "--name must not be empty"
-  for n in "$boot_timeout" "$boot_retries" "$settle_timeout" "$settle_cpu_pct" "$settle_samples" "$settle_interval"; do
+  for n in "$boot_timeout" "$boot_retries"; do
     case $n in
       ''|*[!0-9]*) die "numeric option expected, got: $n" ;;
     esac
   done
-  [ "$settle_interval" -gt 0 ] || die "--settle-interval must be greater than 0"
   validate_version_spec "$os_spec"
   validate_version_spec "$xcode_spec"
 
@@ -501,11 +433,6 @@ EOF
     fi
   else
     boot_with_retries "$udid" "$sim_name" "$boot_timeout" "$boot_retries"
-
-    if [ "$settle_timeout" -gt 0 ]; then
-      log "waiting for the simulator to settle"
-      wait_for_settle "$udid" "$settle_timeout" "$settle_cpu_pct" "$settle_samples" "$settle_interval"
-    fi
   fi
 
   log "booted $udid"

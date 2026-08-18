@@ -38,10 +38,6 @@ The action is a thin wrapper, so every input is one option of the script.
 | `wait` | `--no-wait` | `true` | Wait for the boot to finish. When off, the rows below do not apply |
 | `boot-timeout` | `--boot-timeout` | `360` | Seconds allowed for one boot attempt; `0` disables the limit |
 | `boot-retries` | `--boot-retries` | `2` | Retries after a failed boot |
-| `settle-timeout` | `--settle-timeout` | `0` | Seconds to wait for background daemons to quiet down; `0` skips the wait |
-| `settle-cpu` | `--settle-cpu` | `20` | CPU percentage below which the device counts as settled |
-| `settle-samples` | `--settle-samples` | `3` | Consecutive samples required below the threshold |
-| `settle-interval` | `--settle-interval` | `2` | Seconds between settle samples |
 
 The only output is `udid`. The script additionally takes `--dry-run`, which prints the narrowed list and exits.
 
