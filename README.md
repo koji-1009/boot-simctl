@@ -7,19 +7,18 @@ Boot an iPhone or iPad simulator in GitHub Actions. A composite action wrapping 
 *日本語版は [docs/README.ja.md](docs/README.ja.md) にあります。*
 
 ```yaml
-- id: sim
-  uses: koji-1009/boot-simctl@v1.0.0
+- uses: koji-1009/boot-simctl@v1.1.0
   with:
     device: iPhone
     os: '26.1'
 
-- run: xcodebuild test -destination "id=${{ steps.sim.outputs.udid }}" ...
+- run: flutter test integration_test/app_test.dart -d "$SIMULATOR_UDID"
 
-- if: always() && steps.sim.outputs.udid != ''
-  uses: koji-1009/boot-simctl/shutdown@v1.0.0
-  with:
-    udid: ${{ steps.sim.outputs.udid }}
+- if: always()
+  uses: koji-1009/boot-simctl/shutdown@v1.1.0
 ```
+
+The booted device is published as `SIMULATOR_UDID` for the rest of the job. Pass that when a tool asks for a device — the simulator is named `ci-simulator`, so `flutter test -d iPhone` will not find it.
 
 `actions/checkout` is not required — the action carries its own script.
 
@@ -34,9 +33,9 @@ The action is a thin wrapper, so every input is one option of the script.
 | `xcode-version` | `--xcode` | current | Xcode to select first, same syntax. Sets `DEVELOPER_DIR` for the rest of the job |
 | `model` | `--model` | none | Exact model name, e.g. `iPhone 17 Pro`. Takes precedence over `device` |
 
-The only output is `udid`. The script additionally takes `--dry-run`, which prints the narrowed list and exits.
+The script additionally takes `--dry-run`, which prints the narrowed list and exits.
 
-The `shutdown` action takes `udid` and deletes the device after stopping it. It is a separate action because a composite action cannot register a post step, so clean-up has to be a step you write.
+The `shutdown` action stops the device and deletes it, defaulting to the one this job booted, so it usually needs no inputs. It is a separate action because a composite action cannot register a post step, so clean-up has to be a step you write.
 
 ## Running the script directly
 
@@ -110,13 +109,10 @@ The simulator is created fresh with `simctl create` on every run, so its state i
 Which runtimes are on offer depends on the selected Xcode, so `xcode-version` runs first and the rest of the job inherits it through `DEVELOPER_DIR`. No `sudo` and no `xcode-select` involved.
 
 ```yaml
-- id: sim
-  uses: koji-1009/boot-simctl@v1.0.0
+- uses: koji-1009/boot-simctl@v1.1.0
   with:
     xcode-version: '26.5'
     os: '26'
-
-- run: xcodebuild test -destination "id=${{ steps.sim.outputs.udid }}" ...
 ```
 
 Versions are read from each bundle's `version.plist`, not from its path, so the naming a runner image uses for `/Applications/Xcode*.app` does not matter. `list xcodes` shows what is installed.

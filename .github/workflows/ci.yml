@@ -53,7 +53,6 @@ jobs:
 
       # `uses: ./` is the only way to test action.yml's input wiring.
       - name: Boot the simulator
-        id: sim
         uses: ./
         with:
           device: ${{ matrix.device }}
@@ -63,8 +62,8 @@ jobs:
       # yet, and that is the app's problem, not the action's.
       - name: Use the simulator
         run: |
-          xcrun simctl list devices | grep '${{ steps.sim.outputs.udid }}' | grep Booted
-          xcrun simctl io '${{ steps.sim.outputs.udid }}' screenshot screenshot.png
+          xcrun simctl list devices | grep "$SIMULATOR_UDID" | grep Booted
+          xcrun simctl io "$SIMULATOR_UDID" screenshot screenshot.png
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -73,10 +72,8 @@ jobs:
 
       # A composite action cannot register a post step, so this is explicit.
       - name: Shut down the simulator
-        if: always() && steps.sim.outputs.udid != ''
+        if: always()
         uses: ./shutdown
-        with:
-          udid: ${{ steps.sim.outputs.udid }}
 
   action-defaults:
     name: boot with no inputs
@@ -84,15 +81,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - id: sim
-        uses: ./
+      - uses: ./
 
-      - run: test -n '${{ steps.sim.outputs.udid }}'
+      - run: test -n "$SIMULATOR_UDID"
 
-      - if: always() && steps.sim.outputs.udid != ''
+      - if: always()
         uses: ./shutdown
-        with:
-          udid: ${{ steps.sim.outputs.udid }}
 
   action-xcode:
     name: boot on a pinned Xcode
@@ -104,8 +98,7 @@ jobs:
         id: xc
         run: echo "spec=$(./boot-simctl list xcodes | tail -1 | cut -f1)" >> "$GITHUB_OUTPUT"
 
-      - id: sim
-        uses: ./
+      - uses: ./
         with:
           xcode-version: ${{ steps.xc.outputs.spec }}
 
@@ -115,7 +108,5 @@ jobs:
           test -n "$DEVELOPER_DIR"
           xcodebuild -version
 
-      - if: always() && steps.sim.outputs.udid != ''
+      - if: always()
         uses: ./shutdown
-        with:
-          udid: ${{ steps.sim.outputs.udid }}
