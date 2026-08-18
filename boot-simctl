@@ -283,20 +283,20 @@ find_existing_device() {
 # --- boot --------------------------------------------------------------------
 
 # Runs `simctl bootstatus -b` with a timeout, since macOS has no timeout(1).
-# Returns 124 on timeout, otherwise the exit status of bootstatus.
+# Returns 124 on timeout, otherwise the exit status of bootstatus. Elapsed time
+# comes from the clock, not from counting sleeps, which ignores the loop body.
 boot_and_wait() {
   _udid=$1; _timeout=$2
   xcrun simctl bootstatus "$_udid" -b >&2 &
   _pid=$!
-  _waited=0
+  _started=$(date +%s)
   while kill -0 "$_pid" 2>/dev/null; do
-    if [ "$_timeout" -gt 0 ] && [ "$_waited" -ge "$_timeout" ]; then
+    if [ "$_timeout" -gt 0 ] && [ $(($(date +%s) - _started)) -ge "$_timeout" ]; then
       kill -TERM "$_pid" 2>/dev/null || true
       wait "$_pid" 2>/dev/null || true
       return 124
     fi
     sleep 1
-    _waited=$((_waited + 1))
   done
   wait "$_pid" || return $?
   return 0
