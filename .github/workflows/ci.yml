@@ -55,9 +55,11 @@ jobs:
           device: ${{ matrix.device }}
           os: ${{ steps.os.outputs.spec }}
 
+      # No app launching here: a booted device cannot necessarily open Safari
+      # yet, and that is the app's problem, not the action's.
       - name: Use the simulator
         run: |
-          xcrun simctl openurl '${{ steps.sim.outputs.udid }}' https://example.com
+          xcrun simctl list devices | grep '${{ steps.sim.outputs.udid }}' | grep Booted
           xcrun simctl io '${{ steps.sim.outputs.udid }}' screenshot screenshot.png
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
