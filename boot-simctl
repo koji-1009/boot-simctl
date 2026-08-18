@@ -155,11 +155,11 @@ list_xcodes() {
     return
   fi
   for app in /Applications/Xcode*.app; do
-    [ -d "$app" ] || continue
+    [ -d "$app/Contents/Developer" ] || continue
     version=$(plutil -extract CFBundleShortVersionString raw -o - -- \
       "$app/Contents/version.plist" 2>/dev/null) || continue
-    [ -n "$version" ] && [ -d "$app/Contents/Developer" ] &&
-      printf '%s\t%s\n' "$version" "$app/Contents/Developer"
+    [ -n "$version" ] || continue
+    printf '%s\t%s\n' "$version" "$app/Contents/Developer"
   done
 }
 
@@ -215,7 +215,7 @@ validate_version_spec() {
       *)           num=$tok ;;
     esac
     case $num in
-      ''|*[!0-9.]*|.*|*.|*..*) set +f; die "invalid version requirement: $tok" ;;
+      ''|*[!0-9.]*|.*|*.|*..*) die "invalid version requirement: $tok" ;;
     esac
   done
   set +f
@@ -248,16 +248,16 @@ filter_by_version() {
 
 # --- boot --------------------------------------------------------------------
 
-# Runs `simctl bootstatus -b` with a timeout, since macOS has no timeout(1).
+# Runs `simctl bootstatus -b` under BOOT_TIMEOUT, since macOS has no timeout(1).
 # Returns 124 on timeout, otherwise the exit status of bootstatus. Elapsed time
 # comes from the clock, not from counting sleeps, which ignores the loop body.
 boot_and_wait() {
-  _udid=$1; _timeout=$2
+  _udid=$1
   xcrun simctl bootstatus "$_udid" -b >&2 &
   _pid=$!
   _started=$(date +%s)
   while kill -0 "$_pid" 2>/dev/null; do
-    if [ "$_timeout" -gt 0 ] && [ $(($(date +%s) - _started)) -ge "$_timeout" ]; then
+    if [ "$BOOT_TIMEOUT" -gt 0 ] && [ $(($(date +%s) - _started)) -ge "$BOOT_TIMEOUT" ]; then
       kill -TERM "$_pid" 2>/dev/null || true
       wait "$_pid" 2>/dev/null || true
       return 124
@@ -274,7 +274,7 @@ boot_with_retries() {
   _attempt=1
   _max=$((BOOT_RETRIES + 1))
   while :; do
-    if boot_and_wait "$_udid" "$BOOT_TIMEOUT"; then
+    if boot_and_wait "$_udid"; then
       return 0
     else
       _rc=$?
@@ -392,7 +392,7 @@ cmd_list() {
   # Tab-separated throughout, since model names contain spaces.
   case $what in
     candidates)  candidate_pool ;;
-    runtimes)    candidate_pool | cut -f1,2 | uniq ;;
+    runtimes)    candidate_pool | cut -f1,2 | awk '!seen[$0]++' ;;
     devicetypes) candidate_pool | cut -f3,4,5 | awk '!seen[$0]++' ;;
     xcodes)      list_xcodes | sort_by_version ;;
     devices)     xcrun simctl list devices available 2>/dev/null ;;
