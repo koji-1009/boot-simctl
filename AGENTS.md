@@ -54,7 +54,7 @@ Both are flat objects one level deep, so `awk` can split them on the object boun
 
 **`list <type> <search term>` matches a case-insensitive substring of the item's description.** A runtime identifier does not appear in a device's description, so filtering devices by runtime identifier silently yields only section headers. Filter in the script, not in simctl.
 
-**`bootstatus <udid> -b` boots and waits in one call, and is idempotent** — 0.2s when already booted, 19–23s for a cold boot here. Plain `boot` is *not* idempotent; it fails on an already-booted device, which `--reuse` can produce.
+**`bootstatus <udid> -b` boots and waits in one call, and is idempotent** — 0.2s when already booted, 19–23s for a cold boot here. Plain `boot` is *not* idempotent; it fails on an already-booted device.
 
 **Exit codes**: 145 invalid runtime, 147 incompatible device, 148 invalid device. Error messages go to **stdout**, so piping to `tail` and reading `$?` gives you the exit status of `tail`, not of simctl.
 
@@ -82,7 +82,7 @@ A CPU-quiet heuristic used to sit after boot, ported from `simulator-action`: wa
 
 The tests deliberately verify results by parsing simctl's *text* output, while the script parses JSON. Keeping the two independent means a change that breaks one is not masked by the same change breaking the other.
 
-`--boot-timeout 1` reliably exercises the timeout-and-retry path, including that the failed device is left shut down and no simctl process leaks.
+`BOOT_SIMCTL_BOOT_TIMEOUT=1` reliably exercises the timeout-and-retry path, including that the failed device is left shut down and no simctl process leaks. It and `BOOT_SIMCTL_BOOT_RETRIES` exist only for that; the timeout is not a public option.
 
 **Known untested path:** the retry branch for `bootstatus` failing for a reason *other* than timeout. There is no reliable way found so far to provoke it.
 

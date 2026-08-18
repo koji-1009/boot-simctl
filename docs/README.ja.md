@@ -33,21 +33,16 @@ action は薄いラッパーなので、各入力はスクリプトのオプシ�
 | `os` | `--os` | 指定なし | iOS バージョンの要求（下記） |
 | `xcode-version` | `--xcode` | 選択中のもの | 先に選ぶ Xcode。構文は `os` と同じ。ジョブの残りにも効く `DEVELOPER_DIR` を設定する |
 | `model` | `--model` | なし | 機種名を直接指定する。`device` より優先 |
-| `name` | `--name` | `ci-simulator` | 作成するシミュレーターの名前 |
-| `reuse` | `--reuse` | `false` | 同名かつ同じ iOS バージョンのシミュレーターがあれば再利用する |
-| `wait` | `--no-wait` | `true` | 起動完了を待つ。待たない場合、以下の行は適用されない |
-| `boot-timeout` | `--boot-timeout` | `360` | 1 回の起動試行の制限秒数。`0` で無制限 |
-| `boot-retries` | `--boot-retries` | `2` | 起動に失敗したときの再試行回数 |
 
 出力は `udid` のみです。スクリプトにはこのほかに `--dry-run` があり、絞り込んだリストを表示して終了します。
 
-`shutdown` action は `udid`（必須）と `keep`（既定 `false`、停止後に削除するか）を取ります。**composite action は post ステップを登録できない**ため、後片付けは自分で書くステップになります。
+`shutdown` action は `udid` を取り、停止したうえで削除します。**composite action は post ステップを登録できない**ため、後片付けは自分で書くステップになります。
 
 ## スクリプトを直接使う
 
 ```sh
 boot-simctl boot [options]
-boot-simctl shutdown [--keep] <udid-or-name>
+boot-simctl shutdown <udid-or-name>
 boot-simctl list [runtimes|devicetypes|devices|candidates|xcodes]
 ```
 
@@ -137,6 +132,6 @@ boot-simctl: no iOS version satisfies '26.1'
 
 ## 制限
 
-`shutdown` はデバイスを停止したうえで削除します。残したい場合は `--keep` を付けてください。CI 用の使い捨てシミュレーターを前提にしているので、手元の常用シミュレーターの名前を渡さないよう注意してください。
+シミュレーターは常に `ci-simulator` という名前で作成し、shutdown で必ず削除します。CI 用の使い捨てを前提にしているので、その名前に意味があるマシンでは実行しないでください。
 
 iPhone と iPad のみを対象にしています。Apple TV や Apple Watch は扱いません。

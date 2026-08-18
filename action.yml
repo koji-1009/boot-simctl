@@ -11,34 +11,14 @@ inputs:
     description: 'iOS version (e.g. 26, 26.1, 26.1.1, >=26.1, >=26.0 <26.5)'
     required: false
     default: ''
-  xcode-version:
-    description: 'Xcode to select first, same syntax as os (sets DEVELOPER_DIR for the job)'
-    required: false
-    default: ''
   model:
     description: 'Exact model name (e.g. iPhone 17 Pro), takes precedence over device'
     required: false
     default: ''
-  name:
-    description: 'Name of the simulator to create'
+  xcode-version:
+    description: 'Xcode to select first, same syntax as os (sets DEVELOPER_DIR for the job)'
     required: false
-    default: 'ci-simulator'
-  reuse:
-    description: 'Reuse an existing simulator of the same name and iOS version'
-    required: false
-    default: 'false'
-  wait:
-    description: 'Wait for the boot to finish (the boot inputs need this)'
-    required: false
-    default: 'true'
-  boot-timeout:
-    description: 'Seconds allowed for one boot attempt (0 disables the limit)'
-    required: false
-    default: '360'
-  boot-retries:
-    description: 'Retries after a failed boot'
-    required: false
-    default: '2'
+    default: ''
 
 outputs:
   udid:
@@ -59,23 +39,12 @@ runs:
       env:
         INPUT_DEVICE: ${{ inputs.device }}
         INPUT_OS: ${{ inputs.os }}
-        INPUT_XCODE: ${{ inputs.xcode-version }}
         INPUT_MODEL: ${{ inputs.model }}
-        INPUT_NAME: ${{ inputs.name }}
-        INPUT_REUSE: ${{ inputs.reuse }}
-        INPUT_WAIT: ${{ inputs.wait }}
-        INPUT_BOOT_TIMEOUT: ${{ inputs.boot-timeout }}
-        INPUT_BOOT_RETRIES: ${{ inputs.boot-retries }}
+        INPUT_XCODE: ${{ inputs.xcode-version }}
       run: |
         set -eu
-        set -- boot \
-          --device "$INPUT_DEVICE" \
-          --name "$INPUT_NAME" \
-          --boot-timeout "$INPUT_BOOT_TIMEOUT" \
-          --boot-retries "$INPUT_BOOT_RETRIES"
-        [ -z "$INPUT_XCODE" ]      || set -- "$@" --xcode "$INPUT_XCODE"
-        [ -z "$INPUT_OS" ]         || set -- "$@" --os "$INPUT_OS"
-        [ -z "$INPUT_MODEL" ]      || set -- "$@" --model "$INPUT_MODEL"
-        [ "$INPUT_REUSE" != true ] || set -- "$@" --reuse
-        [ "$INPUT_WAIT" = true ]   || set -- "$@" --no-wait
+        set -- boot --device "$INPUT_DEVICE"
+        [ -z "$INPUT_XCODE" ] || set -- "$@" --xcode "$INPUT_XCODE"
+        [ -z "$INPUT_OS" ]    || set -- "$@" --os "$INPUT_OS"
+        [ -z "$INPUT_MODEL" ] || set -- "$@" --model "$INPUT_MODEL"
         "$GITHUB_ACTION_PATH/boot-simctl" "$@"

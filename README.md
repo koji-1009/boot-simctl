@@ -33,21 +33,16 @@ The action is a thin wrapper, so every input is one option of the script.
 | `os` | `--os` | any | iOS version requirement (see below) |
 | `xcode-version` | `--xcode` | current | Xcode to select first, same syntax. Sets `DEVELOPER_DIR` for the rest of the job |
 | `model` | `--model` | none | Exact model name, e.g. `iPhone 17 Pro`. Takes precedence over `device` |
-| `name` | `--name` | `ci-simulator` | Name of the simulator to create |
-| `reuse` | `--reuse` | `false` | Reuse an existing simulator of that name **and** iOS version |
-| `wait` | `--no-wait` | `true` | Wait for the boot to finish. When off, the rows below do not apply |
-| `boot-timeout` | `--boot-timeout` | `360` | Seconds allowed for one boot attempt; `0` disables the limit |
-| `boot-retries` | `--boot-retries` | `2` | Retries after a failed boot |
 
 The only output is `udid`. The script additionally takes `--dry-run`, which prints the narrowed list and exits.
 
-The `shutdown` action takes `udid` (required) and `keep` (default `false`, delete after stopping). It is a separate action because a composite action cannot register a post step, so clean-up has to be a step you write.
+The `shutdown` action takes `udid` and deletes the device after stopping it. It is a separate action because a composite action cannot register a post step, so clean-up has to be a step you write.
 
 ## Running the script directly
 
 ```sh
 boot-simctl boot [options]
-boot-simctl shutdown [--keep] <udid-or-name>
+boot-simctl shutdown <udid-or-name>
 boot-simctl list [runtimes|devicetypes|devices|candidates|xcodes]
 ```
 
@@ -137,6 +132,6 @@ If the runner has no runtime for the version you need, `xcodebuild -downloadPlat
 
 ## Limitations
 
-`shutdown` deletes the device after stopping it. Pass `--keep` to stop it only. It assumes disposable CI simulators, so take care not to hand it the name of a simulator you actually use.
+The simulator is always created as `ci-simulator` and always deleted on shutdown. It assumes disposable CI simulators, so do not run this against a machine where that name means something to you.
 
 Only iPhone and iPad are supported. Apple TV and Apple Watch are not.
