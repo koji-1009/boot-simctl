@@ -180,10 +180,10 @@ else
   fail "some real candidate rows are malformed"
 fi
 # -E, not BRE: BSD grep does not honour \| as alternation.
-if printf '%s\n' "$real" | cut -f3 | sort -u | grep -qvE '^(iPhone|iPad)$'; then
-  fail "the real candidate list contains a non-iPhone/iPad family"
+if printf '%s\n' "$real" | cut -f3 | sort -u | grep -qvE '^(iPhone|iPad|Apple TV|Apple Watch|Apple Vision)$'; then
+  fail "the real candidate list holds an unknown family: $(printf '%s\n' "$real" | cut -f3 | sort -u | tr '\n' ' ')"
 else
-  ok "the real candidate list holds only iPhone and iPad"
+  ok "every family in the real candidate list is one --device accepts"
 fi
 if printf '%s\n' "$real" | grep -q 'iPhone SE (3rd generation)'; then
   ok "model names containing parentheses survive JSON extraction"
