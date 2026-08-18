@@ -7,8 +7,13 @@
 set -eu
 
 PROG=${0##*/}
-DEFAULT_NAME=ci-simulator
 TAB=$(printf '\t')
+
+SIM_NAME=ci-simulator
+
+# Overridable so the tests can reach the timeout path without a 360s wait.
+BOOT_TIMEOUT=${BOOT_SIMCTL_BOOT_TIMEOUT:-360}
+BOOT_RETRIES=${BOOT_SIMCTL_BOOT_RETRIES:-2}
 
 # Test hooks: read the candidate or Xcode list from a file instead of the system.
 CANDIDATES_FILE=${BOOT_SIMCTL_CANDIDATES_FILE:-}
@@ -27,11 +32,8 @@ usage() {
   cat <<'EOF'
 Usage:
   boot-simctl boot [options]
-  boot-simctl shutdown [--keep] <udid-or-name>
+  boot-simctl shutdown <udid-or-name>
   boot-simctl list [runtimes|devicetypes|devices|candidates|xcodes]
-
-shutdown options:
-  --keep                   Stop the device but do not delete it
 
 boot options:
   --device iPhone|iPad     Device family to launch (default: iPhone).
@@ -40,14 +42,6 @@ boot options:
   --xcode <spec>           Select this Xcode first, same syntax as --os. Sets
                            DEVELOPER_DIR, which decides the runtimes on offer.
   --model <name>           Exact device model, e.g. "iPhone 17 Pro"
-  --name <name>            Name of the simulator to create (default: ci-simulator)
-  --reuse                  Reuse an existing simulator of that name and iOS
-                           version instead of recreating it
-  --no-wait                Return as soon as boot is requested. The boot
-                           options below do not apply in that case.
-  --boot-timeout <sec>     Give up on a single boot attempt after this long,
-                           0 to disable (default: 360)
-  --boot-retries <n>       Retry a failed boot this many times (default: 2)
   --dry-run                Print the matching candidates, the chosen one first,
                            and exit without creating or booting anything
 
@@ -74,20 +68,6 @@ On success the UDID of the booted device is printed on stdout, and written to
 $GITHUB_OUTPUT as `udid=<udid>` when running under GitHub Actions.
 EOF
 }
-
-# --- shared awk preambles ----------------------------------------------------
-
-# Splits a line of flat JSON objects into out[1..n] and reads a field by name,
-# returning "" when it is absent.
-AWK_JSON='
-  function objects(line, out) { return split(line, out, /\}[^{]*\{/) }
-  function field(row, key,   pat) {
-    pat = "\"" key "\":\"[^\"]*\""
-    if (!match(row, pat)) return ""
-    return substr(row, RSTART + length(key) + 4, RLENGTH - length(key) - 5)
-  }
-'
-
 
 # Fixed-width sortable version key. Ordering and --os comparison must agree, so
 # both use this one definition.
@@ -129,9 +109,16 @@ build_candidates() {
       identifier=$(plutil -extract "runtimes.$i.identifier" raw -o - -- "$TMPFILE" 2>/dev/null) || identifier=
       if [ -n "$version" ] && [ -n "$identifier" ]; then
         plutil -extract "runtimes.$i.supportedDeviceTypes" json -o - -- "$TMPFILE" 2>/dev/null |
-        awk -v v="$version" -v r="$identifier" "$AWK_JSON"'
+        awk -v v="$version" -v r="$identifier" '
+          # The payload is one line of flat objects; read fields by name so the
+          # order simctl serialises them in does not matter.
+          function field(row, key,   pat) {
+            pat = "\"" key "\":\"[^\"]*\""
+            if (!match(row, pat)) return ""
+            return substr(row, RSTART + length(key) + 4, RLENGTH - length(key) - 5)
+          }
           {
-            n = objects($0, rows)
+            n = split($0, rows, /\}[^{]*\{/)
             for (k = 1; k <= n; k++) {
               name = field(rows[k], "name")
               id   = field(rows[k], "identifier")
@@ -259,27 +246,6 @@ filter_by_version() {
   '
 }
 
-# --- simctl helpers ----------------------------------------------------------
-
-# Prints "<udid><TAB><state>" for an available device named $1 under runtime
-# identifier $2, or nothing. The runtime must match, or --reuse would return a
-# leftover device on another iOS version.
-find_existing_device() {
-  xcrun simctl list devices --json 2>/dev/null |
-  plutil -extract "devices.$(printf '%s' "$2" | sed 's/\./\\./g')" json -o - -- - 2>/dev/null |
-  awk -v n="$1" "$AWK_JSON"'
-    {
-      count = objects($0, rows)
-      for (k = 1; k <= count; k++) {
-        if (field(rows[k], "name") != n) continue
-        if (!index(rows[k], "\"isAvailable\":true")) continue
-        udid = field(rows[k], "udid")
-        if (udid != "") { print udid "\t" field(rows[k], "state"); exit }
-      }
-    }
-  '
-}
-
 # --- boot --------------------------------------------------------------------
 
 # Runs `simctl bootstatus -b` with a timeout, since macOS has no timeout(1).
@@ -302,27 +268,26 @@ boot_and_wait() {
   return 0
 }
 
-# Boots $1 (named $2), retrying up to $4 times with a $3-second limit each.
-# Dies if every attempt fails.
+# Boots $1, retrying up to BOOT_RETRIES times. Dies if every attempt fails.
 boot_with_retries() {
-  _udid=$1; _name=$2; _timeout=$3; _retries=$4
+  _udid=$1
   _attempt=1
-  _max=$((_retries + 1))
+  _max=$((BOOT_RETRIES + 1))
   while :; do
-    if boot_and_wait "$_udid" "$_timeout"; then
+    if boot_and_wait "$_udid" "$BOOT_TIMEOUT"; then
       return 0
     else
       _rc=$?
     fi
     if [ "$_rc" = 124 ]; then
-      log "warning: boot attempt ${_attempt}/${_max} timed out after ${_timeout}s"
+      log "warning: boot attempt ${_attempt}/${_max} timed out after ${BOOT_TIMEOUT}s"
     else
       log "warning: boot attempt ${_attempt}/${_max} failed (exit ${_rc})"
     fi
     # Kept, not deleted, so `simctl diagnose` can still reach it by name.
     xcrun simctl shutdown "$_udid" >/dev/null 2>&1 || true
     [ "$_attempt" -lt "$_max" ] ||
-      die "device $_udid failed to boot; it is left shut down as '$_name'"
+      die "device $_udid failed to boot; it is left shut down as '$SIM_NAME'"
     _attempt=$((_attempt + 1))
   done
 }
@@ -334,36 +299,20 @@ cmd_boot() {
   os_spec=
   xcode_spec=
   model=
-  sim_name=$DEFAULT_NAME
-  reuse=0
-  wait_for_boot=1
-  boot_timeout=360
-  boot_retries=2
   dry_run=0
 
   while [ $# -gt 0 ]; do
     case $1 in
-      --device)          need_value "$@"; family=$2; shift 2 ;;
-      --os)              need_value "$@"; os_spec=$2; shift 2 ;;
-      --xcode)           need_value "$@"; xcode_spec=$2; shift 2 ;;
-      --model)           need_value "$@"; model=$2; shift 2 ;;
-      --name)            need_value "$@"; sim_name=$2; shift 2 ;;
-      --boot-timeout)    need_value "$@"; boot_timeout=$2; shift 2 ;;
-      --boot-retries)    need_value "$@"; boot_retries=$2; shift 2 ;;
-      --reuse)           reuse=1; shift ;;
-      --no-wait)         wait_for_boot=0; shift ;;
-      --dry-run)         dry_run=1; shift ;;
-      -h|--help)         usage; return 0 ;;
-      *)                 die "unknown option for boot: $1" ;;
+      --device)  need_value "$@"; family=$2; shift 2 ;;
+      --os)      need_value "$@"; os_spec=$2; shift 2 ;;
+      --xcode)   need_value "$@"; xcode_spec=$2; shift 2 ;;
+      --model)   need_value "$@"; model=$2; shift 2 ;;
+      --dry-run) dry_run=1; shift ;;
+      -h|--help) usage; return 0 ;;
+      *)         die "unknown option for boot: $1" ;;
     esac
   done
 
-  [ -n "$sim_name" ] || die "--name must not be empty"
-  for n in "$boot_timeout" "$boot_retries"; do
-    case $n in
-      ''|*[!0-9]*) die "numeric option expected, got: $n" ;;
-    esac
-  done
   validate_version_spec "$os_spec"
   validate_version_spec "$xcode_spec"
 
@@ -405,35 +354,11 @@ EOF
   log "selected $device_name on iOS $runtime_version"
 
   # A fresh device starts clean, so no `simctl erase` is needed.
-  udid=
-  state=Shutdown
-  if [ "$reuse" = 1 ]; then
-    existing=$(find_existing_device "$sim_name" "$runtime_id")
-    if [ -n "$existing" ]; then
-      udid=${existing%"$TAB"*}
-      state=${existing#*"$TAB"}
-      log "reusing existing device $udid"
-    else
-      log "no existing '$sim_name' on iOS $runtime_version; creating one"
-    fi
-  fi
+  xcrun simctl delete "$SIM_NAME" >/dev/null 2>&1 || true
+  udid=$(xcrun simctl create "$SIM_NAME" "$devicetype_id" "$runtime_id") ||
+    die "could not create $device_name on iOS $runtime_version"
 
-  if [ -z "$udid" ]; then
-    xcrun simctl delete "$sim_name" >/dev/null 2>&1 || true
-    udid=$(xcrun simctl create "$sim_name" "$devicetype_id" "$runtime_id") ||
-      die "could not create $device_name on iOS $runtime_version"
-  fi
-
-  if [ "$wait_for_boot" = 0 ]; then
-    # Plain `boot` fails on an already-booted device, unlike `bootstatus -b`.
-    if [ "$state" = Booted ]; then
-      log "device is already booted"
-    else
-      xcrun simctl boot "$udid" >&2
-    fi
-  else
-    boot_with_retries "$udid" "$sim_name" "$boot_timeout" "$boot_retries"
-  fi
+  boot_with_retries "$udid"
 
   log "booted $udid"
   [ -z "${GITHUB_OUTPUT:-}" ] || echo "udid=$udid" >> "$GITHUB_OUTPUT"
@@ -441,11 +366,9 @@ EOF
 }
 
 cmd_shutdown() {
-  keep=0
   target=
   while [ $# -gt 0 ]; do
     case $1 in
-      --keep) keep=1; shift ;;
       -h|--help) usage; return 0 ;;
       -*) die "unknown option for shutdown: $1" ;;
       *)
@@ -460,9 +383,7 @@ cmd_shutdown() {
   [ -n "$target" ] || die "shutdown needs a UDID or simulator name"
 
   xcrun simctl shutdown "$target" >/dev/null 2>&1 || true
-  if [ "$keep" = 0 ]; then
-    xcrun simctl delete "$target" >/dev/null 2>&1 || true
-  fi
+  xcrun simctl delete "$target" >/dev/null 2>&1 || true
   log "shut down $target"
 }
 

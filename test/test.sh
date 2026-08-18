@@ -145,8 +145,7 @@ expect_fail "unknown boot option fails"             boot --nope
 expect_fail "unknown list target fails"             list nonsense
 expect_fail "--device rejects other families"       boot --device appleWatch --dry-run
 expect_fail "--model rejects unknown models"        boot --model "iPhone 99" --dry-run
-expect_fail "--name rejects an empty value"         boot --name "" --dry-run
-expect_fail "non-numeric --boot-timeout fails"      boot --boot-timeout soon --dry-run
+expect_fail "a removed option is rejected"          boot --reuse --dry-run
 expect_fail "invalid version requirement fails"     boot --os ">=abc" --dry-run
 # Would pass if the spec were glob-expanded against the working directory.
 expect_fail "a globbing --os fails"                 boot --os "*" --dry-run
@@ -183,16 +182,14 @@ fi
 
 if [ "$RUN_SLOW" = 1 ]; then
   echo "booting real simulators"
-  NAME=boot-simctl-test
-  versions=$("$SCRIPT" list runtimes | cut -f1)
-  oldest=$(printf '%s\n' "$versions" | tail -1)
-  newest=$(printf '%s\n' "$versions" | head -1)
+  NAME=ci-simulator
+  oldest=$("$SCRIPT" list runtimes | cut -f1 | tail -1)
 
   # Reads simctl's text output while the script reads JSON, so one breaking
   # cannot mask the other.
   sim_state() { xcrun simctl list devices 2>/dev/null | awk -v k="$1" 'index($0, k) { print $NF; exit }'; }
 
-  if udid=$("$SCRIPT" boot --device iPhone --name "$NAME" 2>/dev/null); then
+  if udid=$("$SCRIPT" boot --device iPhone 2>/dev/null); then
     eq "iPhone booted ($udid)" "$(sim_state "$udid")" "(Booted)"
     "$SCRIPT" shutdown "$udid" >/dev/null 2>&1
     if xcrun simctl list devices 2>/dev/null | grep -q "$udid"; then
@@ -204,24 +201,19 @@ if [ "$RUN_SLOW" = 1 ]; then
     fail "booting an iPhone failed"
   fi
 
-  if udid=$("$SCRIPT" boot --device iPad --name "$NAME" 2>/dev/null); then
-    ok "iPad booted ($udid)"
+  # The newest iPhone models cannot run the oldest runtime, so this also proves
+  # the candidate list excluded them.
+  if udid=$("$SCRIPT" boot --device iPad --os "$oldest" 2>/dev/null); then
+    ok "iPad booted on iOS $oldest ($udid)"
     "$SCRIPT" shutdown "$udid" >/dev/null 2>&1
   else
-    fail "booting an iPad failed"
-  fi
-
-  # The newest iPhone models cannot run the oldest runtime and must be excluded.
-  if udid=$("$SCRIPT" boot --device iPhone --os "$oldest" --name "$NAME" --no-wait 2>/dev/null); then
-    ok "picked a model compatible with iOS $oldest"
-    "$SCRIPT" shutdown "$udid" >/dev/null 2>&1
-  else
-    fail "no compatible model found for iOS $oldest"
+    fail "booting an iPad on iOS $oldest failed"
   fi
 
   # A 1s timeout always expires, which is how the failure path gets exercised.
   before=$(ps -Ao comm= | grep -c 'simctl$' || true)
-  if "$SCRIPT" boot --device iPhone --name "$NAME" --boot-timeout 1 --boot-retries 1 >/dev/null 2>"$HERE/.timeout.log"; then
+  if BOOT_SIMCTL_BOOT_TIMEOUT=1 BOOT_SIMCTL_BOOT_RETRIES=1 \
+    "$SCRIPT" boot --device iPhone >/dev/null 2>"$HERE/.timeout.log"; then
     fail "a 1s boot timeout should have failed the run"
   else
     ok "boot timeout fails the run"
@@ -240,28 +232,8 @@ if [ "$RUN_SLOW" = 1 ]; then
     fail "simctl processes went from $before to $after"
   fi
   rm -f "$HERE/.timeout.log"
-  xcrun simctl delete "$NAME" >/dev/null 2>&1 || true
-
-  first=$("$SCRIPT" boot --device iPhone --os "$newest" --name "$NAME" --reuse --no-wait 2>/dev/null) || first=
-  second=$("$SCRIPT" boot --device iPhone --os "$newest" --name "$NAME" --reuse --no-wait 2>/dev/null) || second=
-  if [ -n "$first" ] && [ "$first" = "$second" ]; then
-    ok "--reuse returns the same device on a second run"
-  else
-    fail "--reuse returned '$first' then '$second'"
-  fi
-
-  # A device of the right name but the wrong runtime must not satisfy --os.
-  if [ "$oldest" != "$newest" ]; then
-    third=$("$SCRIPT" boot --device iPhone --os "$oldest" --name "$NAME" --reuse --no-wait 2>/dev/null) || third=
-    if [ -n "$third" ] && [ "$third" != "$first" ]; then
-      ok "--reuse recreates the device when the runtime differs"
-    else
-      fail "--reuse kept '$third' when asked for iOS $oldest"
-    fi
-  fi
 
   "$SCRIPT" shutdown "$NAME" >/dev/null 2>&1 || true
-  xcrun simctl delete "$NAME" >/dev/null 2>&1 || true
   if xcrun simctl list devices 2>/dev/null | grep -q "$NAME"; then
     fail "test devices were left behind"
   else
