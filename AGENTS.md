@@ -17,6 +17,8 @@ The action is the product; the script is how it is implemented. A change to the 
 
 Action inputs reach the script as `env:` variables, never as `${{ }}` expanded into `run:`, so a model name containing quotes cannot break out of the command. Keep it that way. Optional flags are appended with `set --` because POSIX sh has no arrays.
 
+Results go out through `GITHUB_ENV`, not step outputs: `SIMULATOR_UDID`, `SIMULATOR_MODEL`, `SIMULATOR_PLATFORM`, `SIMULATOR_OS`, and `DEVELOPER_DIR` when an Xcode was selected. A step output would need the caller to give the step an `id` and thread the value; publishing what was resolved means the next step just reads it. Anything the selection resolves belongs here — that is the rule, not the current list.
+
 Run `./test/test.sh` after any change, and `./test/test.sh --all` before committing. The slow run takes a few minutes and boots three simulators; it cleans up after itself and asserts that it did.
 
 ## Design
