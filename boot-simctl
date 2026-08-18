@@ -366,7 +366,14 @@ EOF
   boot_with_retries "$udid"
 
   log "booted $udid"
-  [ -z "${GITHUB_ENV:-}" ] || echo "SIMULATOR_UDID=$udid" >> "$GITHUB_ENV"
+  if [ -n "${GITHUB_ENV:-}" ]; then
+    {
+      echo "SIMULATOR_UDID=$udid"
+      echo "SIMULATOR_MODEL=$device_name"
+      echo "SIMULATOR_PLATFORM=$platform"
+      echo "SIMULATOR_OS=$runtime_version"
+    } >> "$GITHUB_ENV"
+  fi
   echo "$udid"
 }
 

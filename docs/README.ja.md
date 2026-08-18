@@ -18,9 +18,28 @@ GitHub Actions で iPhone / iPad / Apple TV / Apple Watch のシミュレータ�
   uses: koji-1009/boot-simctl/shutdown@v1.1.0
 ```
 
-起動したデバイスは `SIMULATOR_UDID` としてジョブの残りに公開されます。ツールがデバイスを要求したらこれを渡してください。シミュレーターの名前は `ci-simulator` なので、`flutter test -d iPhone` では見つかりません。
-
 `actions/checkout` は不要です。action 自身がスクリプトを持っています。
+
+## 環境変数
+
+action は解決した内容をジョブの残りに公開します。
+
+| 変数 | 例 | 設定されるとき |
+| --- | --- | --- |
+| `SIMULATOR_UDID` | `208B12BF-09EE-48E3-AE6B-AF5748F5E116` | 常に |
+| `SIMULATOR_MODEL` | `iPhone 17 Pro` | 常に |
+| `SIMULATOR_PLATFORM` | `iOS` | 常に |
+| `SIMULATOR_OS` | `26.5` | 常に |
+| `DEVELOPER_DIR` | `/Applications/Xcode_26.5.app/Contents/Developer` | `xcode-version` を指定したとき |
+
+ツールがデバイスを要求したら `SIMULATOR_UDID` を渡してください。シミュレーターの名前は `ci-simulator` なので、`flutter test -d iPhone` では見つかりません。残りはアーティファクト名やログのためのものです。`--os 26` は複数のバージョンに解決されうるので、実際に何が選ばれたかが分かります。
+
+```yaml
+- uses: actions/upload-artifact@v4
+  with:
+    name: screenshot-${{ env.SIMULATOR_MODEL }}-${{ env.SIMULATOR_OS }}
+    path: screenshot.png
+```
 
 ## 入力
 

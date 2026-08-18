@@ -18,9 +18,28 @@ Boot an iPhone, iPad, Apple TV or Apple Watch simulator in GitHub Actions. A com
   uses: koji-1009/boot-simctl/shutdown@v1.1.0
 ```
 
-The booted device is published as `SIMULATOR_UDID` for the rest of the job. Pass that when a tool asks for a device — the simulator is named `ci-simulator`, so `flutter test -d iPhone` will not find it.
-
 `actions/checkout` is not required — the action carries its own script.
+
+## Environment
+
+The action publishes what it resolved, for the rest of the job:
+
+| Variable | Example | Set when |
+| --- | --- | --- |
+| `SIMULATOR_UDID` | `208B12BF-09EE-48E3-AE6B-AF5748F5E116` | always |
+| `SIMULATOR_MODEL` | `iPhone 17 Pro` | always |
+| `SIMULATOR_PLATFORM` | `iOS` | always |
+| `SIMULATOR_OS` | `26.5` | always |
+| `DEVELOPER_DIR` | `/Applications/Xcode_26.5.app/Contents/Developer` | `xcode-version` was given |
+
+Pass `SIMULATOR_UDID` when a tool asks for a device — the simulator is named `ci-simulator`, so `flutter test -d iPhone` will not find it. The rest are there for naming artifacts and reading logs, since `--os 26` can resolve to any of several versions:
+
+```yaml
+- uses: actions/upload-artifact@v4
+  with:
+    name: screenshot-${{ env.SIMULATOR_MODEL }}-${{ env.SIMULATOR_OS }}
+    path: screenshot.png
+```
 
 ## Inputs
 
