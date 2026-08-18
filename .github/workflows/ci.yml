@@ -44,7 +44,7 @@ jobs:
       - name: Resolve the iOS version
         id: os
         run: |
-          versions=$(./boot-simctl list runtimes | cut -f1)
+          versions=$(./boot-simctl list runtimes | grep 'SimRuntime\.iOS-' | cut -f1)
           case '${{ matrix.runtime }}' in
             newest) spec=$(printf '%s\n' "$versions" | head -1) ;;
             oldest) spec=$(printf '%s\n' "$versions" | tail -1) ;;
@@ -73,6 +73,25 @@ jobs:
       # A composite action cannot register a post step, so this is explicit.
       - name: Shut down the simulator
         if: always()
+        uses: ./shutdown
+
+  action-families:
+    name: boot ${{ matrix.device }}
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [tv, watch]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./
+        with:
+          device: ${{ matrix.device }}
+
+      - run: xcrun simctl list devices | grep "$SIMULATOR_UDID" | grep Booted
+
+      - if: always()
         uses: ./shutdown
 
   action-defaults:

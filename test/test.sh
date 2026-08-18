@@ -66,6 +66,14 @@ echo "priority: nothing set"
 expect "26.5 / iPhone 17 Pro"           # newest iPhone on the newest iOS
 expect "26.5 / iPad Pro 13-inch (M5)"   --device iPad
 
+echo "priority: other device families"
+expect "26.5 / Apple TV 4K (3rd generation)"  --device tv
+expect "26.5 / Apple Watch Series 11 (46mm)"  --device watch
+expect "26.2 / Apple TV 4K (3rd generation)"  --device tv --os 26.2
+expect "26.5 / Apple Watch SE 3 (44mm)"       --model "Apple Watch SE 3 (44mm)"
+expect "-"                                    --device tv --os 18
+expect "-"                                    --device vision
+
 echo "priority: iOS version set"
 expect "26.1.1 / iPhone 17 Pro"         --os 26.1
 expect "26.1.1 / iPhone 17 Pro"         --os 26.1.1
@@ -111,8 +119,11 @@ eq "model order within one iOS version is preserved" \
   "$(printf '%s\n' "$rows" | awk -F'\t' '$1 == "26.5" && $3 == "iPhone" { print $4 }' | tr '\n' ',')" \
   "iPhone 17 Pro,iPhone 17 Pro Max,iPhone Air,iPhone 17,"
 eq "list runtimes deduplicates and orders versions" \
-  "$(BOOT_SIMCTL_CANDIDATES_FILE=$FIXTURE "$SCRIPT" list runtimes | cut -f1 | tr '\n' ',')" \
+  "$(BOOT_SIMCTL_CANDIDATES_FILE=$FIXTURE "$SCRIPT" list runtimes | grep 'SimRuntime\.iOS-' | cut -f1 | tr '\n' ',')" \
   "26.5,26.4.1,26.2,26.1.1,26.0.1,18.6,"
+eq "list runtimes keeps every platform" \
+  "$(BOOT_SIMCTL_CANDIDATES_FILE=$FIXTURE "$SCRIPT" list runtimes | sed 's/.*SimRuntime\.//; s/-.*//' | awk '!seen[$0]++' | tr '\n' ',')" \
+  "iOS,tvOS,watchOS,"
 
 echo "xcode selection"
 # xcode_choice <spec> -> the Developer dir it would select, or "-"
@@ -143,7 +154,7 @@ expect_fail "shutdown with an empty argument fails" shutdown ""
 expect_fail "unknown subcommand fails"              frobnicate
 expect_fail "unknown boot option fails"             boot --nope
 expect_fail "unknown list target fails"             list nonsense
-expect_fail "--device rejects other families"       boot --device appleWatch --dry-run
+expect_fail "--device rejects unknown families"     boot --device android --dry-run
 expect_fail "--model rejects unknown models"        boot --model "iPhone 99" --dry-run
 expect_fail "a removed option is rejected"          boot --reuse --dry-run
 expect_fail "invalid version requirement fails"     boot --os ">=abc" --dry-run
