@@ -66,7 +66,7 @@ A CPU-quiet heuristic used to sit after boot, ported from `simulator-action`: wa
 
 ## Environment gotchas
 
-**macOS has no `timeout(1)`.** `boot_and_wait` implements it with a background job plus a polling loop.
+**macOS has no `timeout(1)`.** `boot_and_wait` implements it with a background job plus a polling loop, measuring elapsed time with `date +%s`. Never count sleeps instead: whatever the loop body does is unpaid time. A wait that counted sleeps once overran a 120s limit by 41s, because each pass sampled `ps` over every process on the machine.
 
 **BSD `grep` does not honour `\|` as BRE alternation.** `grep -c '^iPhone$\|^iPad$'` silently matched only one of the two alternatives here and produced a false test failure. Use `grep -E`.
 
