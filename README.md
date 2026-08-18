@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/koji-1009/boot-simctl/actions/workflows/ci.yml/badge.svg)](https://github.com/koji-1009/boot-simctl/actions/workflows/ci.yml)
 
-Boot an iPhone or iPad simulator in GitHub Actions. A composite action wrapping one POSIX shell script, which calls `xcrun simctl` and uses `plutil` and POSIX `sed` / `awk` / `sort` / `ps`.
+Boot an iPhone, iPad, Apple TV or Apple Watch simulator in GitHub Actions. A composite action wrapping one POSIX shell script, which calls `xcrun simctl` and uses `plutil` and POSIX `sed` / `awk` / `sort` / `ps`.
 
 *日本語版は [docs/README.ja.md](docs/README.ja.md) にあります。*
 
@@ -28,8 +28,8 @@ The action is a thin wrapper, so every input is one option of the script.
 
 | Input | Option | Default | Description |
 | --- | --- | --- | --- |
-| `device` | `--device` | `iPhone` | `iPhone` or `iPad`. Ignored when a model is set |
-| `os` | `--os` | any | iOS version requirement (see below) |
+| `device` | `--device` | `iPhone` | `iPhone`, `iPad`, `tv`, `watch` or `vision`. Ignored when a model is set |
+| `os` | `--os` | any | OS version requirement for that family (see below) |
 | `xcode-version` | `--xcode` | current | Xcode to select first, same syntax. Sets `DEVELOPER_DIR` for the rest of the job |
 | `model` | `--model` | none | Exact model name, e.g. `iPhone 17 Pro`. Takes precedence over `device` |
 
@@ -51,16 +51,17 @@ On success the UDID is printed on stdout as the only line. Every diagnostic goes
 
 This is what both the action and the script do; the inputs above map one-to-one onto the options below.
 
-Every "iOS version × model" pairing the machine can actually run is collected into one list. Each option you pass narrows that list, and the **first surviving entry wins**. The list is ordered newest iOS first and, within one iOS version, in the order Xcode itself lists models — newest first.
+Every "OS version × model" pairing the machine can actually run is collected into one list. Each option you pass narrows that list, and the **first surviving entry wins**. The list is ordered newest OS first and, within one version, in the order Xcode itself lists models — newest first.
 
 | Options | What you get |
 | --- | --- |
 | (none) | newest iPhone on the newest iOS |
 | `--device iPad` | newest iPad on the newest iOS |
+| `--device watch` | newest Apple Watch on the newest watchOS |
 | `--os 26.1` | newest iPhone on the newest 26.1.x |
 | `--os 26.1 --model "iPhone 17"` | exactly that pairing |
 
-`--model` overrides `--device`. Given a model alone, you get the newest iOS that can run it.
+`--model` overrides `--device`. Given a model alone, you get the newest OS that can run it.
 
 `list candidates` prints the whole list. `--dry-run` prints what survived the narrowing — the chosen entry first — without creating or booting anything. Both emit the same tab-separated columns, so `cut -f4` and friends work on either.
 
@@ -77,10 +78,10 @@ When the narrowing empties the list, the failure names the requirement that empt
 
 ```
 $ ./boot-simctl boot --os 26.1
-boot-simctl: available iOS versions:
+boot-simctl: available OS versions:
   26.5
   18.6
-boot-simctl: no iOS version satisfies '26.1'
+boot-simctl: no OS version satisfies '26.1'
 ```
 
 ### Version requirements
@@ -130,4 +131,4 @@ If the runner has no runtime for the version you need, `xcodebuild -downloadPlat
 
 The simulator is always created as `ci-simulator` and always deleted on shutdown. It assumes disposable CI simulators, so do not run this against a machine where that name means something to you.
 
-Only iPhone and iPad are supported. Apple TV and Apple Watch are not.
+`vision` is accepted but untested: GitHub runners carry no visionOS runtime.

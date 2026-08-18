@@ -1,6 +1,6 @@
 # Notes for agents working on this repo
 
-A composite GitHub Action that boots an iOS Simulator, implemented as one POSIX shell script. The constraint that matters most is: **do not add dependencies.** The allowed toolbox is `xcrun`, `plutil`, and POSIX `sed` / `awk` / `sort` / `ps` / `mktemp`.
+A composite GitHub Action that boots a simulator, implemented as one POSIX shell script. The constraint that matters most is: **do not add dependencies.** The allowed toolbox is `xcrun`, `plutil`, and POSIX `sed` / `awk` / `sort` / `ps` / `mktemp`.
 
 ```
 action.yml                     composite action wrapping the script
@@ -21,11 +21,11 @@ Run `./test/test.sh` after any change, and `./test/test.sh --all` before committ
 
 ## Design
 
-Every "iOS version × model" pairing the machine can run is built into one list, ordered newest iOS first and, within a version, in simctl's own model order (newest first). Options narrow the list through `narrow`; the first survivor wins. Keep this shape — it is what lets a failure name the requirement that emptied the list and show what could have satisfied it.
+Every "OS version × model" pairing the machine can run is built into one list, ordered newest OS first and, within a version, in simctl's own model order (newest first). Options narrow the list through `narrow`; the first survivor wins. Keep this shape — it is what lets a failure name the requirement that emptied the list and show what could have satisfied it.
 
 Every list-shaped output — `list candidates`, `list runtimes`, `list devicetypes`, `--dry-run` — is the same tab-separated row format, so callers can `cut` columns out of any of them. Do not space-separate: model names contain spaces.
 
-The list comes from each runtime's `supportedDeviceTypes`, which contains exactly the pairings CoreSimulator accepts. Nothing needs to guess compatibility, and there is no create-and-retry fallback because there is nothing to fall back from.
+The list comes from each runtime's `supportedDeviceTypes`, which contains exactly the pairings CoreSimulator accepts. It carries `productFamily`, so tvOS and watchOS need no special casing: dropping the `platform = iOS` filter was the whole of that support. Nothing needs to guess compatibility, and there is no create-and-retry fallback because there is nothing to fall back from.
 
 Devices are created fresh on every run rather than reused, which is why no `simctl erase` is needed.
 

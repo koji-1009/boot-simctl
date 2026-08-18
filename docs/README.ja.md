@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/koji-1009/boot-simctl/actions/workflows/ci.yml/badge.svg)](https://github.com/koji-1009/boot-simctl/actions/workflows/ci.yml)
 
-GitHub Actions で iPhone / iPad のシミュレーターを起動する composite action です。中身は POSIX シェルスクリプト 1 本で、`xcrun simctl` を呼び、`plutil` と POSIX の `sed` / `awk` / `sort` / `ps` を使います。
+GitHub Actions で iPhone / iPad / Apple TV / Apple Watch のシミュレーターを起動する composite action です。中身は POSIX シェルスクリプト 1 本で、`xcrun simctl` を呼び、`plutil` と POSIX の `sed` / `awk` / `sort` / `ps` を使います。
 
 *The English version is at [README.md](../README.md).*
 
@@ -28,8 +28,8 @@ action は薄いラッパーなので、各入力はスクリプトのオプシ�
 
 | 入力 | オプション | 既定値 | 説明 |
 | --- | --- | --- | --- |
-| `device` | `--device` | `iPhone` | `iPhone` または `iPad`。機種名の指定時は無視 |
-| `os` | `--os` | 指定なし | iOS バージョンの要求（下記） |
+| `device` | `--device` | `iPhone` | `iPhone` / `iPad` / `tv` / `watch` / `vision`。機種名の指定時は無視 |
+| `os` | `--os` | 指定なし | その系列の OS バージョンの要求（下記） |
 | `xcode-version` | `--xcode` | 選択中のもの | 先に選ぶ Xcode。構文は `os` と同じ。ジョブの残りにも効く `DEVELOPER_DIR` を設定する |
 | `model` | `--model` | なし | 機種名を直接指定する。`device` より優先 |
 
@@ -51,12 +51,13 @@ boot-simctl list [runtimes|devicetypes|devices|candidates|xcodes]
 
 action とスクリプトで共通の挙動です。上の入力は下のオプションと 1 対 1 に対応します。
 
-このマシンで実際に動かせる「iOS バージョン × 機種」の組み合わせをすべて 1 本のリストにまとめ、指定したオプションで順に絞り込み、**残った先頭**を採用します。リストは新しい iOS が先、同じ iOS の中では Xcode 自身が並べる順（新しい機種が先）です。
+このマシンで実際に動かせる「OS バージョン × 機種」の組み合わせをすべて 1 本のリストにまとめ、指定したオプションで順に絞り込み、**残った先頭**を採用します。リストは新しい OS が先、同じバージョンの中では Xcode 自身が並べる順（新しい機種が先）です。
 
 | 指定 | 選ばれるもの |
 | --- | --- |
 | （なし） | 最新 iOS の最新 iPhone |
 | `--device iPad` | 最新 iOS の最新 iPad |
+| `--device watch` | 最新 watchOS の最新 Apple Watch |
 | `--os 26.1` | 26.1.x のうち最新の、その最新 iPhone |
 | `--os 26.1 --model "iPhone 17"` | ちょうどその組み合わせ |
 
@@ -77,10 +78,10 @@ $ ./boot-simctl boot --device iPad --os '>=26' --dry-run
 
 ```
 $ ./boot-simctl boot --os 26.1
-boot-simctl: available iOS versions:
+boot-simctl: available OS versions:
   26.5
   18.6
-boot-simctl: no iOS version satisfies '26.1'
+boot-simctl: no OS version satisfies '26.1'
 ```
 
 ### バージョン指定
@@ -130,4 +131,4 @@ boot-simctl: no iOS version satisfies '26.1'
 
 シミュレーターは常に `ci-simulator` という名前で作成し、shutdown で必ず削除します。CI 用の使い捨てを前提にしているので、その名前に意味があるマシンでは実行しないでください。
 
-iPhone と iPad のみを対象にしています。Apple TV や Apple Watch は扱いません。
+`vision` も受け付けますが未検証です。GitHub のランナーに visionOS ランタイムが入っていないためです。

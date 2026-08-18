@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Boot an iPhone or iPad simulator. Run with --help for usage.
+# Boot a simulator. Run with --help for usage.
 #
 # Dependencies: xcrun (Xcode), plutil (macOS), POSIX sed/awk/sort/ps. macOS only.
 
@@ -36,9 +36,9 @@ Usage:
   boot-simctl list [runtimes|devicetypes|devices|candidates|xcodes]
 
 boot options:
-  --device iPhone|iPad     Device family to launch (default: iPhone).
+  --device <family>        iPhone, iPad, tv, watch or vision (default: iPhone).
                            Ignored when --model is given.
-  --os <spec>              iOS version requirement (default: any)
+  --os <spec>              OS version requirement for that family (default: any)
   --xcode <spec>           Select this Xcode first, same syntax as --os. Sets
                            DEVELOPER_DIR, which decides the runtimes on offer.
   --model <name>           Exact device model, e.g. "iPhone 17 Pro"
@@ -47,13 +47,14 @@ boot options:
 
 How a device is chosen:
 
-  Every (iOS version, device model) pair that this Mac can actually run is
-  collected into one list, ordered newest iOS first and, within one iOS version,
-  in the order Xcode itself lists models -- newest first. Each option you pass
+  Every (OS version, device model) pair that this Mac can actually run is
+  collected into one list, ordered newest OS first and, within one version, in
+  the order Xcode itself lists models -- newest first. Each option you pass
   narrows that list, and the first surviving entry wins:
 
     (nothing)                     newest iPhone on the newest iOS
     --device iPad                 newest iPad on the newest iOS
+    --device watch                newest Apple Watch on the newest watchOS
     --os 26.1                     newest iPhone on the newest 26.1.x
     --os 26.1 --model "iPhone 17" exactly that pairing
 
@@ -64,8 +65,8 @@ Space-separated requirements are ANDed together.
   26.1        any 26.1.x            <26.5           older than 26.5
   26.1.1      exactly 26.1.1        ">=26.0 <26.5"  both must hold
 
-On success the UDID of the booted device is printed on stdout, and written to
-$GITHUB_OUTPUT as `udid=<udid>` when running under GitHub Actions.
+On success the UDID of the booted device is printed on stdout, and published as
+SIMULATOR_UDID when running under GitHub Actions.
 EOF
 }
 
@@ -82,7 +83,7 @@ AWK_VKEY='
 #
 # One tab-separated row per pairing CoreSimulator will accept:
 #
-#   <ios version>  <runtime id>  <family>  <model name>  <device type id>
+#   <os version>  <runtime id>  <family>  <model name>  <device type id>
 
 build_candidates() {
   if [ -n "$CANDIDATES_FILE" ]; then
@@ -102,9 +103,8 @@ build_candidates() {
 
   i=0
   while [ "$i" -lt "$count" ]; do
-    platform=$(plutil -extract "runtimes.$i.platform" raw -o - -- "$TMPFILE" 2>/dev/null) || platform=
     available=$(plutil -extract "runtimes.$i.isAvailable" raw -o - -- "$TMPFILE" 2>/dev/null) || available=false
-    if [ "$platform" = iOS ] && [ "$available" = true ]; then
+    if [ "$available" = true ]; then
       version=$(plutil -extract "runtimes.$i.version" raw -o - -- "$TMPFILE" 2>/dev/null) || version=
       identifier=$(plutil -extract "runtimes.$i.identifier" raw -o - -- "$TMPFILE" 2>/dev/null) || identifier=
       if [ -n "$version" ] && [ -n "$identifier" ]; then
@@ -320,27 +320,30 @@ cmd_boot() {
   [ -z "$xcode_spec" ] || select_xcode "$xcode_spec"
 
   case $(printf '%s' "$family" | tr 'A-Z' 'a-z') in
-    iphone) family=iPhone ;;
-    ipad)   family=iPad ;;
-    *) die "--device must be iPhone or iPad (got: $family)" ;;
+    iphone)            family=iPhone ;;
+    ipad)              family=iPad ;;
+    tv|appletv)        family='Apple TV' ;;
+    watch|applewatch)  family='Apple Watch' ;;
+    vision|applevision) family='Apple Vision' ;;
+    *) die "--device must be one of: iPhone, iPad, tv, watch, vision (got: $family)" ;;
   esac
 
   pool=$(candidate_pool)
   [ -n "$pool" ] ||
-    die "no available iOS runtimes found; check that Xcode is selected (xcode-select -p)"
+    die "no available runtimes found; check that Xcode is selected (xcode-select -p)"
 
   if [ -n "$os_spec" ]; then
-    narrow "no iOS version satisfies '$os_spec'" \
-      1 "available iOS versions" filter_by_version "$os_spec"
+    narrow "no OS version satisfies '$os_spec'" \
+      1 "available OS versions" filter_by_version "$os_spec"
   fi
 
   # --model names a device outright, so it supersedes the family filter.
   if [ -n "$model" ]; then
     narrow "no model named '$model'" \
-      4 "models available on the matching iOS versions" filter_by_field 4 "$model"
+      4 "models available on the matching versions" filter_by_field 4 "$model"
   else
-    narrow "no $family model is available on the matching iOS versions" \
-      4 "models available on the matching iOS versions" filter_by_field 3 "$family"
+    narrow "no $family model is available on the matching versions" \
+      4 "models available on the matching versions" filter_by_field 3 "$family"
   fi
 
   if [ "$dry_run" = 1 ]; then
@@ -351,12 +354,14 @@ cmd_boot() {
   IFS=$TAB read -r runtime_version runtime_id _family device_name devicetype_id <<EOF
 $pool
 EOF
-  log "selected $device_name on iOS $runtime_version"
+  platform=${runtime_id##*.SimRuntime.}
+  platform=${platform%%-*}
+  log "selected $device_name on $platform $runtime_version"
 
   # A fresh device starts clean, so no `simctl erase` is needed.
   xcrun simctl delete "$SIM_NAME" >/dev/null 2>&1 || true
   udid=$(xcrun simctl create "$SIM_NAME" "$devicetype_id" "$runtime_id") ||
-    die "could not create $device_name on iOS $runtime_version"
+    die "could not create $device_name on $platform $runtime_version"
 
   boot_with_retries "$udid"
 
