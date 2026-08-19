@@ -15,15 +15,22 @@ SIM_NAME=ci-simulator
 BOOT_TIMEOUT=${BOOT_SIMCTL_BOOT_TIMEOUT:-360}
 BOOT_RETRIES=${BOOT_SIMCTL_BOOT_RETRIES:-2}
 
-# Test hooks: read the candidate or Xcode list from a file instead of the system.
+# Test hooks: read a list from a file instead of asking the system for it.
 CANDIDATES_FILE=${BOOT_SIMCTL_CANDIDATES_FILE:-}
 XCODES_FILE=${BOOT_SIMCTL_XCODES_FILE:-}
+RUNTIMES_JSON=${BOOT_SIMCTL_RUNTIMES_JSON:-}
 
 TMPFILE=
 trap '[ -z "$TMPFILE" ] || rm -f "$TMPFILE"' EXIT
 
-log() { echo "$PROG: $*" >&2; }
+log() { printf '%s: %s\n' "$PROG" "$*" >&2; }
 die() { log "$*"; exit 1; }
+
+for n in "$BOOT_TIMEOUT" "$BOOT_RETRIES"; do
+  case $n in
+    ''|*[!0-9]*) die "BOOT_SIMCTL_BOOT_TIMEOUT and _RETRIES must be numeric, got: $n" ;;
+  esac
+done
 
 # Called as `need_value "$@"` from an option branch: fails when $1 has no value.
 need_value() { [ $# -ge 2 ] || die "$1 needs a value"; }
@@ -93,8 +100,12 @@ build_candidates() {
 
   TMPFILE=$(mktemp "${TMPDIR:-/tmp}/boot-simctl.XXXXXX") ||
     die "could not create a temporary file"
-  xcrun simctl list runtimes --json >"$TMPFILE" 2>/dev/null ||
-    die "could not read the runtime list; check that Xcode is selected (xcode-select -p)"
+  if [ -n "$RUNTIMES_JSON" ]; then
+    cat "$RUNTIMES_JSON" >"$TMPFILE"
+  else
+    xcrun simctl list runtimes --json >"$TMPFILE" 2>/dev/null ||
+      die "could not read the runtime list; check that Xcode is selected (xcode-select -p)"
+  fi
 
   count=$(plutil -extract runtimes raw -o - -- "$TMPFILE" 2>/dev/null) || count=0
   case $count in
@@ -107,7 +118,9 @@ build_candidates() {
     if [ "$available" = true ]; then
       version=$(plutil -extract "runtimes.$i.version" raw -o - -- "$TMPFILE" 2>/dev/null) || version=
       identifier=$(plutil -extract "runtimes.$i.identifier" raw -o - -- "$TMPFILE" 2>/dev/null) || identifier=
-      if [ -n "$version" ] && [ -n "$identifier" ]; then
+      if [ -z "$version" ] || [ -z "$identifier" ]; then
+        log "warning: runtime $i has no version or identifier; skipping it"
+      else
         plutil -extract "runtimes.$i.supportedDeviceTypes" json -o - -- "$TMPFILE" 2>/dev/null |
         awk -v v="$version" -v r="$identifier" '
           # The payload is one line of flat objects; read fields by name so the
@@ -182,9 +195,11 @@ select_xcode() {
   [ -z "${GITHUB_ENV:-}" ] || echo "DEVELOPER_DIR=$DEVELOPER_DIR" >> "$GITHUB_ENV"
 }
 
-# Keeps the candidate rows whose column $1 equals $2.
+# Keeps the candidate rows whose column $1 equals $2. The value travels in the
+# environment, not through -v, which cannot carry a newline and would re-process
+# backslash escapes in a model name.
 filter_by_field() {
-  awk -F'\t' -v col="$1" -v want="$2" '$col == want'
+  BS_COL=$1 BS_WANT=$2 awk -F'\t' '$(ENVIRON["BS_COL"]) == ENVIRON["BS_WANT"]'
 }
 
 # Narrows $pool by running "$4 $5..." over it. On an empty result, lists the
@@ -223,7 +238,7 @@ validate_version_spec() {
 
 # Keeps the candidate rows whose iOS version satisfies $1.
 filter_by_version() {
-  awk -F'\t' -v spec="$1" "$AWK_VKEY"'
+  BS_SPEC=$1 awk -F'\t' "$AWK_VKEY"'
     # Prefix on dot boundaries: "26.1" matches 26.1.1 but not 26.10.
     function isprefix(v, p) { return index(v ".", p ".") == 1 }
     function satisfies(v, s,   i, n, t, tok, op, arg) {
@@ -242,7 +257,7 @@ filter_by_version() {
       }
       return 1
     }
-    satisfies($1, spec)
+    satisfies($1, ENVIRON["BS_SPEC"])
   '
 }
 

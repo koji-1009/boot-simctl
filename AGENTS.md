@@ -8,6 +8,7 @@ shutdown/action.yml            clean-up action; composite actions cannot post
 boot-simctl                    the whole implementation
 test/test.sh                   the test suite; --all also boots real simulators
 test/candidates-fixture.tsv    candidate list used by the selection tests
+test/runtimes-fixture.json     captured simctl JSON, for the parser tests
 README.md                      for people using the action
 docs/README.ja.md              same, in Japanese; keep the two in step
 .github/workflows/ci.yml       CI; also the only test of action.yml
@@ -30,6 +31,8 @@ Every list-shaped output — `list candidates`, `list runtimes`, `list devicetyp
 The list comes from each runtime's `supportedDeviceTypes`, which contains exactly the pairings CoreSimulator accepts. It carries `productFamily`, so tvOS and watchOS need no special casing: dropping the `platform = iOS` filter was the whole of that support. Nothing needs to guess compatibility, and there is no create-and-retry fallback because there is nothing to fall back from.
 
 Devices are created fresh on every run rather than reused, which is why no `simctl erase` is needed.
+
+`SIM_NAME` is a constant and every boot deletes that name first, so **one simulator per job**: a second boot destroys the first device and overwrites `SIMULATOR_UDID`. Two jobs sharing a self-hosted runner collide the same way. Supporting more than one at a time needs per-device naming and cleanup, which is where a composite action starts to hurt — it has no `post` step to hang that on.
 
 ## simctl facts
 
@@ -72,15 +75,17 @@ A CPU-quiet heuristic used to sit after boot, ported from `simulator-action`: wa
 
 **BSD `grep` does not honour `\|` as BRE alternation.** `grep -c '^iPhone$\|^iPad$'` silently matched only one of the two alternatives here and produced a false test failure. Use `grep -E`.
 
-**`/bin/sh` is bash 3.2 in sh mode.** Keep to POSIX; no arrays, no `[[`, no `<<<`, no `local`.
+**`/bin/sh` is bash 3.2 in sh mode.** Keep to POSIX; no arrays, no `[[`, no `<<<`, no `local`. It also has `xpg_echo` on, so `echo` expands `\t` and truncates at `\c` in whatever the caller passed: `log` uses `printf`.
 
-**Nothing here has been through `shellcheck`.** Run it if you have it.
+**Never pass a value to awk with `-v`.** BSD awk rejects a newline in a `-v` assignment and re-processes backslash escapes in it, so an input like `--model 'a\tb'` arrives changed. Put it in the environment and read `ENVIRON[]`.
+
+**`shellcheck` runs in CI** on Linux, where it is preinstalled and the runner is cheap. It would have caught the `awk -v` and `echo` defects below on the day they were written.
 
 **If every simctl call fails** with `CoreSimulatorService connection became invalid`, the process is sandboxed away from XPC. That is the sandbox, not the script.
 
 ## Testing
 
-`BOOT_SIMCTL_CANDIDATES_FILE` replaces the candidate list with a fixture, which is how version and model combinations no single machine has installed get tested. It is a test hook; do not use it for anything else.
+`BOOT_SIMCTL_CANDIDATES_FILE` replaces the candidate list with a fixture, which is how version and model combinations no single machine has installed get tested. `BOOT_SIMCTL_RUNTIMES_JSON` feeds `build_candidates` a captured `list runtimes --json` instead, so the JSON parsing has tests of its own — the candidate hook bypasses it. Both are test hooks; do not use them for anything else.
 
 The tests deliberately verify results by parsing simctl's *text* output, while the script parses JSON. Keeping the two independent means a change that breaks one is not masked by the same change breaking the other.
 
