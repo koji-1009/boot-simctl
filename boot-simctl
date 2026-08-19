@@ -334,7 +334,7 @@ cmd_boot() {
   # Before anything reads the runtime list: which runtimes exist depends on it.
   [ -z "$xcode_spec" ] || select_xcode "$xcode_spec"
 
-  case $(printf '%s' "$family" | tr 'A-Z' 'a-z') in
+  case $(printf '%s' "$family" | tr '[:upper:]' '[:lower:]') in
     iphone)            family=iPhone ;;
     ipad)              family=iPad ;;
     tv|appletv)        family='Apple TV' ;;

@@ -259,7 +259,7 @@ if [ "$RUN_SLOW" = 1 ]; then
   fi
 
   # A 1s timeout always expires, which is how the failure path gets exercised.
-  before=$(ps -Ao comm= | grep -c 'simctl$' || true)
+  before=$(pgrep -x simctl | wc -l | tr -d ' ')
   if BOOT_SIMCTL_BOOT_TIMEOUT=1 BOOT_SIMCTL_BOOT_RETRIES=1 \
     "$SCRIPT" boot --device iPhone >/dev/null 2>"$HERE/.timeout.log"; then
     fail "a 1s boot timeout should have failed the run"
@@ -273,7 +273,7 @@ if [ "$RUN_SLOW" = 1 ]; then
   fi
   eq "a device that failed to boot is left shut down" "$(sim_state "$NAME (")" "(Shutdown)"
   sleep 2
-  after=$(ps -Ao comm= | grep -c 'simctl$' || true)
+  after=$(pgrep -x simctl | wc -l | tr -d ' ')
   if [ "$after" -le "$before" ]; then
     ok "no simctl process is left behind after a timeout"
   else
