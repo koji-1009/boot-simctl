@@ -125,6 +125,43 @@ eq "list runtimes keeps every platform" \
   "$(BOOT_SIMCTL_CANDIDATES_FILE=$FIXTURE "$SCRIPT" list runtimes | sed 's/.*SimRuntime\.//; s/-.*//' | awk '!seen[$0]++' | tr '\n' ',')" \
   "iOS,tvOS,watchOS,"
 
+echo "parsing simctl's runtime JSON"
+# Exercises build_candidates itself, which the candidate fixture bypasses.
+parsed=$(BOOT_SIMCTL_RUNTIMES_JSON=$HERE/runtimes-fixture.json "$SCRIPT" list candidates)
+eq "reads every device type of an available runtime" \
+  "$(printf '%s\n' "$parsed" | wc -l | tr -d ' ')" "4"
+eq "keeps fields together in the right row" \
+  "$(printf '%s\n' "$parsed" | head -1 | cut -f1,3,4)" \
+  "26.5	iPhone	iPhone 17 Pro"
+eq "reads a model name containing parentheses" \
+  "$(printf '%s\n' "$parsed" | awk -F'\t' '$4 ~ /SE/ { print $4 }')" \
+  "iPhone SE (3rd generation)"
+eq "skips a runtime marked unavailable" \
+  "$(printf '%s\n' "$parsed" | grep -c 'iOS-18-6' || true)" "0"
+eq "carries every platform through" \
+  "$(printf '%s\n' "$parsed" | cut -f2 | sed 's/.*SimRuntime\.//; s/-.*//' | awk '!seen[$0]++' | tr '\n' ',')" \
+  "iOS,tvOS,"
+
+echo "input handling"
+# awk -v cannot carry a newline and re-processes backslash escapes; these fail
+# with a diagnostic rather than an awk error or a mangled message.
+nl=$(printf 'iPhone 17 Pro\n\n')
+eq "a newline in --model is rejected cleanly" \
+  "$(BOOT_SIMCTL_CANDIDATES_FILE=$FIXTURE "$SCRIPT" boot --model "$nl" --dry-run 2>&1 |
+     grep -c 'awk' || true)" "0"
+eq "a backslash escape in --model survives into the message" \
+  "$(BOOT_SIMCTL_CANDIDATES_FILE=$FIXTURE "$SCRIPT" boot --model 'x\c HIDDEN' --dry-run 2>&1 |
+     sed -n 's/.*no model named //p')" \
+  "'x\\c HIDDEN'"
+BOOT_SIMCTL_BOOT_TIMEOUT=abc
+export BOOT_SIMCTL_BOOT_TIMEOUT
+if BOOT_SIMCTL_CANDIDATES_FILE=$FIXTURE "$SCRIPT" boot --dry-run >/dev/null 2>&1; then
+  fail "a non-numeric BOOT_SIMCTL_BOOT_TIMEOUT should be rejected"
+else
+  ok "a non-numeric BOOT_SIMCTL_BOOT_TIMEOUT is rejected"
+fi
+unset BOOT_SIMCTL_BOOT_TIMEOUT
+
 echo "xcode selection"
 # xcode_choice <spec> -> the Developer dir it would select, or "-"
 xcode_choice() {
@@ -222,7 +259,7 @@ if [ "$RUN_SLOW" = 1 ]; then
   fi
 
   # A 1s timeout always expires, which is how the failure path gets exercised.
-  before=$(ps -Ao comm= | grep -c 'simctl$' || true)
+  before=$(pgrep -x simctl | wc -l | tr -d ' ')
   if BOOT_SIMCTL_BOOT_TIMEOUT=1 BOOT_SIMCTL_BOOT_RETRIES=1 \
     "$SCRIPT" boot --device iPhone >/dev/null 2>"$HERE/.timeout.log"; then
     fail "a 1s boot timeout should have failed the run"
@@ -236,7 +273,7 @@ if [ "$RUN_SLOW" = 1 ]; then
   fi
   eq "a device that failed to boot is left shut down" "$(sim_state "$NAME (")" "(Shutdown)"
   sleep 2
-  after=$(ps -Ao comm= | grep -c 'simctl$' || true)
+  after=$(pgrep -x simctl | wc -l | tr -d ' ')
   if [ "$after" -le "$before" ]; then
     ok "no simctl process is left behind after a timeout"
   else
