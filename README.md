@@ -7,7 +7,7 @@ Boot an iPhone, iPad, Apple TV or Apple Watch simulator in GitHub Actions. A com
 *日本語版は [docs/README.ja.md](docs/README.ja.md) にあります。*
 
 ```yaml
-- uses: koji-1009/boot-simctl@v1.1.0
+- uses: koji-1009/boot-simctl@ecc5161dd40a0854fde7591b5a11c9584fb684bf # v1.2.0
   with:
     device: iPhone
     os: '26.1'
@@ -15,7 +15,7 @@ Boot an iPhone, iPad, Apple TV or Apple Watch simulator in GitHub Actions. A com
 - run: flutter test integration_test/app_test.dart -d "$SIMULATOR_UDID"
 
 - if: always()
-  uses: koji-1009/boot-simctl/shutdown@v1.1.0
+  uses: koji-1009/boot-simctl/shutdown@ecc5161dd40a0854fde7591b5a11c9584fb684bf # v1.2.0
 ```
 
 `actions/checkout` is not required — the action carries its own script.
@@ -129,7 +129,7 @@ The simulator is created fresh with `simctl create` on every run, so its state i
 Which runtimes are on offer depends on the selected Xcode, so `xcode-version` runs first and the rest of the job inherits it through `DEVELOPER_DIR`. No `sudo` and no `xcode-select` involved.
 
 ```yaml
-- uses: koji-1009/boot-simctl@v1.1.0
+- uses: koji-1009/boot-simctl@ecc5161dd40a0854fde7591b5a11c9584fb684bf # v1.2.0
   with:
     xcode-version: '26.5'
     os: '26'

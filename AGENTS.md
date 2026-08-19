@@ -91,7 +91,9 @@ The tests read simctl's *text* output while the script reads JSON, so one breaki
 
 ## Releasing
 
-Releases are immutable and there is no moving `v1` tag: a fix ships as a new version, never as a repointed tag. Update the version in both READMEs when releasing.
+Releases are immutable and there is no moving `v1` tag: a fix ships as a new version, never as a repointed tag.
+
+The READMEs pin the released commit with the tag in a trailing comment, the form `pinact` produces and the one callers actually use. Update both when releasing — a release is not done until they point at it.
 
 ## Conventions
 
